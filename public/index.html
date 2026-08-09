@@ -3954,6 +3954,368 @@
       .composer textarea { min-width: 0; padding-left: 4px; padding-right: 4px; }
       .composer-shell { padding-left: 10px; padding-right: 10px; }
     }
+
+    /* UI depth polish */
+    .thread,
+    .composer-shell,
+    .workspace,
+    .welcome,
+    .welcome-actions {
+      min-width: 0;
+    }
+    .thread {
+      overflow-x: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(150, 164, 190, .34) transparent;
+    }
+    .composer-shell { overflow-x: hidden; }
+    .thread::-webkit-scrollbar,
+    .thread-menu-content::-webkit-scrollbar,
+    .workspace::-webkit-scrollbar,
+    .steps::-webkit-scrollbar {
+      width: 7px;
+      height: 7px;
+    }
+    .thread::-webkit-scrollbar-track,
+    .thread-menu-content::-webkit-scrollbar-track,
+    .workspace::-webkit-scrollbar-track,
+    .steps::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .thread::-webkit-scrollbar-thumb,
+    .thread-menu-content::-webkit-scrollbar-thumb,
+    .workspace::-webkit-scrollbar-thumb,
+    .steps::-webkit-scrollbar-thumb {
+      border: 2px solid transparent;
+      border-radius: 999px;
+      background: rgba(150, 164, 190, .34);
+      background-clip: padding-box;
+    }
+    ::selection { background: rgba(113, 168, 255, .28); }
+    .welcome {
+      display: grid;
+      justify-items: center;
+      align-content: center;
+      width: 100%;
+      gap: 12px;
+      min-height: min(52vh, 460px);
+      padding: 38px 18px 44px;
+      text-align: center;
+      animation: welcomeRise .42s ease both;
+    }
+    .thread.has-messages .welcome { display: none; }
+    .welcome-mark {
+      display: grid;
+      place-items: center;
+      width: 54px;
+      height: 54px;
+      border: 1px solid rgba(158, 203, 255, .35);
+      border-radius: 17px;
+      color: #dceaff;
+      background: linear-gradient(145deg, rgba(158, 203, 255, .18), rgba(142, 240, 183, .08));
+      box-shadow: 0 14px 34px rgba(36, 67, 118, .22), inset 0 1px 0 rgba(255,255,255,.14);
+    }
+    .welcome-mark svg {
+      width: 27px;
+      height: 27px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .welcome-title {
+      margin: 2px 0 0;
+      color: var(--text);
+      font-size: clamp(21px, 3vw, 28px);
+      font-weight: 720;
+      letter-spacing: 0;
+    }
+    .welcome-sub {
+      max-width: 360px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+    .welcome-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 9px;
+      margin-top: 5px;
+    }
+    .welcome-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 40px;
+      padding: 0 15px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      color: var(--text);
+      background: rgba(255,255,255,.06);
+      box-shadow: 0 8px 22px rgba(0,0,0,.10);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .welcome-action:hover { border-color: rgba(158, 203, 255, .42); background: rgba(158, 203, 255, .12); }
+    .welcome-action.primary {
+      border-color: transparent;
+      color: #101723;
+      background: #e6edf8;
+      box-shadow: 0 8px 24px rgba(95, 133, 183, .22);
+    }
+    .welcome-action.primary:hover { background: #f3f7fd; }
+    .welcome-action svg {
+      width: 17px;
+      height: 17px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .composer {
+      border-color: rgba(158, 178, 211, .26);
+      box-shadow: 0 18px 42px rgba(0,0,0,.20), 0 0 0 1px rgba(255,255,255,.025);
+    }
+    .composer:focus-within {
+      border-color: rgba(158, 203, 255, .54);
+      box-shadow: 0 18px 42px rgba(0,0,0,.24), 0 0 0 3px rgba(158, 203, 255, .10);
+    }
+    .send-btn {
+      background: linear-gradient(145deg, #f5f8fd, #c9d9ed);
+      box-shadow: 0 7px 18px rgba(108, 149, 203, .22);
+    }
+    .send-btn:not(:disabled):hover { filter: brightness(1.06); transform: translateY(-1px); }
+    .message.user .bubble {
+      background: linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.055));
+      border: 1px solid rgba(188, 205, 236, .12);
+      box-shadow: 0 8px 22px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.045);
+    }
+    .markdown-body a {
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+    .markdown-body pre {
+      border-radius: 12px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+    }
+    .markdown-body code { border-radius: 6px; }
+    @keyframes welcomeRise {
+      from { opacity: .78; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (max-width: 700px) {
+      .app {
+        grid-template-columns: minmax(0, 1fr);
+        min-width: 0;
+      }
+      .topbar {
+        background: color-mix(in srgb, var(--topbar-bg) 86%, transparent);
+        backdrop-filter: blur(20px) saturate(1.12);
+        -webkit-backdrop-filter: blur(20px) saturate(1.12);
+      }
+      .welcome {
+        min-height: min(48vh, 360px);
+        width: 100vw;
+        margin-left: -16px;
+        padding-top: 26px;
+      }
+      .welcome-actions {
+        display: grid;
+        width: calc(100vw - 40px);
+        max-width: calc(100vw - 40px);
+        grid-template-columns: 1fr;
+      }
+      .welcome-action {
+        width: 100%;
+        min-width: 0;
+        padding-left: 10px;
+        padding-right: 10px;
+      }
+    }
+    body[data-ui-theme="white-night"] .welcome-mark {
+      border-color: rgba(23, 105, 194, .20);
+      color: #1769c2;
+      background: linear-gradient(145deg, #eef6ff, #f2fbf6);
+      box-shadow: 0 14px 30px rgba(30, 80, 130, .10), inset 0 1px 0 rgba(255,255,255,.92);
+    }
+    body[data-ui-theme="white-night"] .welcome-action {
+      border-color: #e1e5eb;
+      color: #222;
+      background: rgba(255,255,255,.76);
+      box-shadow: 0 8px 22px rgba(30, 48, 70, .08);
+    }
+    body[data-ui-theme="white-night"] .welcome-action:hover { border-color: #b8d4ef; background: #f3f8fd; }
+    body[data-ui-theme="white-night"] .welcome-action.primary {
+      color: #fff;
+      background: #1769c2;
+      box-shadow: 0 8px 22px rgba(23, 105, 194, .18);
+    }
+    body[data-ui-theme="white-night"] .welcome-action.primary:hover { background: #0f5aa8; }
+    body[data-ui-theme="white-night"] .composer {
+      box-shadow: 0 18px 42px rgba(30, 48, 70, .10), 0 0 0 1px rgba(30, 48, 70, .02);
+    }
+    body[data-ui-theme="white-night"] .composer:focus-within {
+      border-color: rgba(23, 105, 194, .42);
+      box-shadow: 0 18px 42px rgba(30, 48, 70, .12), 0 0 0 3px rgba(23, 105, 194, .08);
+    }
+    body[data-ui-theme="white-night"] .send-btn {
+      background: linear-gradient(145deg, #2d83df, #1769c2);
+      box-shadow: 0 7px 18px rgba(23, 105, 194, .20);
+    }
+    body[data-ui-theme="white-night"] .message.user .bubble {
+      border-color: #e7e7e7;
+      background: linear-gradient(145deg, #f8f8f8, #efefef);
+      box-shadow: 0 8px 22px rgba(30, 48, 70, .06), inset 0 1px 0 rgba(255,255,255,.9);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .welcome { animation: none; }
+      .send-btn:not(:disabled):hover { transform: none; }
+    }
+    body[data-ui-theme="black-sky"] {
+      --glass-panel: rgba(14, 19, 31, .72);
+      --glass-panel-strong: rgba(18, 24, 39, .86);
+      --glass-border: rgba(190, 206, 234, .18);
+      --glass-highlight: rgba(255,255,255,.07);
+    }
+    body[data-ui-theme="white-night"] {
+      --glass-panel: rgba(255,255,255,.72);
+      --glass-panel-strong: rgba(255,255,255,.88);
+      --glass-border: rgba(38, 62, 92, .12);
+      --glass-highlight: rgba(255,255,255,.86);
+    }
+    body[data-ui-theme="black-sky"] .topbar,
+    body[data-ui-theme="black-sky"] .thread-menu,
+    body[data-ui-theme="black-sky"] .thread-action-card,
+    body[data-ui-theme="black-sky"] .context-quick-card,
+    body[data-ui-theme="black-sky"] .model-menu,
+    body[data-ui-theme="black-sky"] .reasoning-menu {
+      border-color: var(--glass-border);
+      background: var(--glass-panel);
+      box-shadow: 0 20px 55px rgba(0,0,0,.30), inset 0 1px 0 var(--glass-highlight);
+      backdrop-filter: blur(24px) saturate(1.2);
+      -webkit-backdrop-filter: blur(24px) saturate(1.2);
+    }
+    body[data-ui-theme="black-sky"] .thread-menu {
+      color: var(--text);
+      border-right: 1px solid var(--glass-border);
+    }
+    body[data-ui-theme="black-sky"] .drawer-close,
+    body[data-ui-theme="black-sky"] .drawer-search {
+      border: 1px solid rgba(190, 206, 234, .12);
+      background: rgba(255,255,255,.055);
+      color: var(--text);
+    }
+    body[data-ui-theme="black-sky"] .drawer-search input,
+    body[data-ui-theme="black-sky"] .drawer-new,
+    body[data-ui-theme="black-sky"] .drawer-footer,
+    body[data-ui-theme="black-sky"] .drawer-footer-label,
+    body[data-ui-theme="black-sky"] .drawer-account-item,
+    body[data-ui-theme="black-sky"] .project-header,
+    body[data-ui-theme="black-sky"] .thread-option,
+    body[data-ui-theme="black-sky"] .pinned-thread-option {
+      color: var(--text);
+    }
+    body[data-ui-theme="black-sky"] .drawer-nav-item {
+      color: var(--text);
+    }
+    body[data-ui-theme="black-sky"] .drawer-nav-item:hover,
+    body[data-ui-theme="black-sky"] .drawer-nav-item:active,
+    body[data-ui-theme="black-sky"] .drawer-nav-item[aria-current="true"] {
+      background: rgba(158, 203, 255, .11);
+    }
+    body[data-ui-theme="black-sky"] .drawer-nav-item[aria-current="true"] {
+      color: #f5f8fd;
+    }
+    body[data-ui-theme="black-sky"] .thread-button,
+    body[data-ui-theme="black-sky"] .thread-name,
+    body[data-ui-theme="black-sky"] .welcome-action {
+      color: #f5f8fd;
+    }
+    body[data-ui-theme="black-sky"] .welcome-action.primary {
+      color: #101723;
+    }
+    body[data-ui-theme="black-sky"] .skeleton-block {
+      background: rgba(158, 178, 211, .14);
+    }
+    body[data-ui-theme="black-sky"] .skeleton-block::after {
+      background: linear-gradient(90deg, transparent, rgba(220, 234, 255, .16), transparent);
+    }
+    body[data-ui-theme="black-sky"] .drawer-search input::placeholder,
+    body[data-ui-theme="black-sky"] .drawer-footer-detail,
+    body[data-ui-theme="black-sky"] .thread-section-label,
+    body[data-ui-theme="black-sky"] .drawer-account-shortcut {
+      color: var(--faint);
+    }
+    body[data-ui-theme="black-sky"] .drawer-new:hover,
+    body[data-ui-theme="black-sky"] .drawer-new:active,
+    body[data-ui-theme="black-sky"] .drawer-footer:hover,
+    body[data-ui-theme="black-sky"] .drawer-footer:active,
+    body[data-ui-theme="black-sky"] .drawer-account-item:hover,
+    body[data-ui-theme="black-sky"] .drawer-account-item:active,
+    body[data-ui-theme="black-sky"] .project-header:hover,
+    body[data-ui-theme="black-sky"] .project-header:active,
+    body[data-ui-theme="black-sky"] .thread-option:hover,
+    body[data-ui-theme="black-sky"] .thread-option:active,
+    body[data-ui-theme="black-sky"] .pinned-thread-option:hover,
+    body[data-ui-theme="black-sky"] .pinned-thread-option:active {
+      background: rgba(158, 203, 255, .11);
+    }
+    body[data-ui-theme="black-sky"] .thread-option[aria-current="true"],
+    body[data-ui-theme="black-sky"] .pinned-thread-option[aria-current="true"],
+    body[data-ui-theme="black-sky"] .project-header.is-current {
+      background: rgba(158, 203, 255, .15);
+      color: #f5f8fd;
+    }
+    body[data-ui-theme="black-sky"] .drawer-footer {
+      border-top-color: var(--glass-border);
+    }
+    body[data-ui-theme="black-sky"] .drawer-account-menu {
+      border-color: var(--glass-border);
+      background: var(--glass-panel-strong);
+      box-shadow: 0 18px 42px rgba(0,0,0,.32);
+      backdrop-filter: blur(22px) saturate(1.18);
+      -webkit-backdrop-filter: blur(22px) saturate(1.18);
+    }
+    body[data-ui-theme="white-night"] .thread-menu,
+    body[data-ui-theme="white-night"] .thread-action-card,
+    body[data-ui-theme="white-night"] .context-quick-card {
+      border-color: var(--glass-border);
+      background: var(--glass-panel);
+      box-shadow: 0 18px 44px rgba(30,48,70,.12), inset 0 1px 0 var(--glass-highlight);
+      backdrop-filter: blur(22px) saturate(1.1);
+      -webkit-backdrop-filter: blur(22px) saturate(1.1);
+    }
+    body[data-ui-theme="white-night"] .drawer-search {
+      border: 1px solid rgba(38,62,92,.08);
+      background: rgba(245,248,252,.82);
+    }
+    body[data-ui-theme="white-night"] .drawer-close,
+    body[data-ui-theme="white-night"] .drawer-new:hover,
+    body[data-ui-theme="white-night"] .drawer-new:active,
+    body[data-ui-theme="white-night"] .drawer-footer:hover,
+    body[data-ui-theme="white-night"] .drawer-footer:active,
+    body[data-ui-theme="white-night"] .drawer-account-item:hover,
+    body[data-ui-theme="white-night"] .drawer-account-item:active,
+    body[data-ui-theme="white-night"] .project-header:hover,
+    body[data-ui-theme="white-night"] .project-header:active,
+    body[data-ui-theme="white-night"] .thread-option:hover,
+    body[data-ui-theme="white-night"] .thread-option:active,
+    body[data-ui-theme="white-night"] .pinned-thread-option:hover,
+    body[data-ui-theme="white-night"] .pinned-thread-option:active {
+      background: rgba(23, 105, 194, .07);
+    }
+    body[data-ui-theme="white-night"] .thread-option[aria-current="true"],
+    body[data-ui-theme="white-night"] .pinned-thread-option[aria-current="true"],
+    body[data-ui-theme="white-night"] .project-header.is-current {
+      background: rgba(23, 105, 194, .09);
+    }
   </style>
 </head>
 <body>
@@ -4105,7 +4467,23 @@
     </aside>
 
     <main class="thread" id="thread" role="log" aria-label="聊天记录" aria-live="polite">
-      <div class="day-note" data-i18n="mobileSync">手机同步到当前 Codex 对话</div>
+      <section class="welcome" aria-labelledby="welcome-title">
+        <div class="welcome-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="m12 3 1.35 5.65L19 10l-5.65 1.35L12 17l-1.35-5.65L5 10l5.65-1.35L12 3Z"/><path d="m18.5 15 .55 2.45L21.5 18l-2.45.55L18.5 21l-.55-2.45L15.5 18l2.45-.55L18.5 15Z"/></svg>
+        </div>
+        <h1 class="welcome-title" id="welcome-title">Codex Remote Bridge</h1>
+        <p class="welcome-sub" data-i18n="mobileSync">Mobile sync for the current Codex conversation</p>
+        <div class="welcome-actions">
+          <button class="welcome-action primary" id="welcome-open-tasks" type="button" data-i18n-aria="selectTask" aria-label="选择任务">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h11M4 17h7"/></svg>
+            <span data-i18n="selectTask">选择任务</span>
+          </button>
+          <button class="welcome-action" id="welcome-new-thread" type="button" data-i18n-aria="newTask" aria-label="新建任务">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span data-i18n="newTask">新建任务</span>
+          </button>
+        </div>
+      </section>
     </main>
 
     <main class="workspace" id="workspace" aria-live="polite" hidden>
@@ -4161,6 +4539,8 @@
     }
 
     const thread = document.getElementById('thread');
+    const welcomeOpenTasksButton = document.getElementById('welcome-open-tasks');
+    const welcomeNewThreadButton = document.getElementById('welcome-new-thread');
     const composerShell = document.querySelector('.composer-shell');
     const topbar = document.querySelector('.topbar');
     const composer = document.getElementById('composer');
@@ -7306,6 +7686,7 @@
       }
       article.appendChild(wrap);
       thread.appendChild(article);
+      thread.classList.add('has-messages');
       if (!options.skipScroll) scrollBottom();
       wireMessageContextMenu(article, bubble, role);
       return { article, bubble, meta, role };
@@ -7756,6 +8137,7 @@ function addDetails(message, steps = [], liveUpdate = false) {
 
     function clearThreadMessages() {
       [...thread.querySelectorAll('.message')].forEach(node => node.remove());
+      thread.classList.remove('has-messages');
       clearQueuedSends();
     }
 
@@ -9679,6 +10061,7 @@ function addDetails(message, steps = [], liveUpdate = false) {
       wrap.append(meta, bubble);
       article.appendChild(wrap);
       thread.appendChild(article);
+      thread.classList.add('has-messages');
       scrollBottom();
       return article;
     }
@@ -10554,6 +10937,8 @@ function stopPolling() {
       window.visualViewport.addEventListener('scroll', positionThreadMenuCard);
     }
     newThreadButton.addEventListener('click', createNewThreadInCurrentProject);
+    welcomeOpenTasksButton?.addEventListener('click', () => openThreadMenu());
+    welcomeNewThreadButton?.addEventListener('click', createNewThreadInCurrentProject);
     languageToggle?.addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();

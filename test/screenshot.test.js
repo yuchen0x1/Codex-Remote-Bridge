@@ -107,7 +107,7 @@ test('P2-4: /codex/screenshot 鉴权与 CDP 不可用降级', async () => {
 });
 
 test('P2-4: 源码层面存在截图预览实现与前端降级入口', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8').replace(/\r\n/g, '\n');
   assert.ok(src.includes('async function handleScreenshot'), '截图处理器已定义');
   assert.ok(src.includes("prefix: '/codex/screenshot'"), '截图路由已注册');
   assert.ok(src.includes('CDP_UNAVAILABLE'), 'CDP 不可用语义存在');
