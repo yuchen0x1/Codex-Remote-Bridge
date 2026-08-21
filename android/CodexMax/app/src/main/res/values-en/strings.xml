@@ -36,6 +36,9 @@
     <string name="token_invalid">The token is invalid. Scan the computer QR code again.</string>
     <string name="http_error">The computer returned HTTP %1$d</string>
     <string name="webview_process_failed">Page rendering stopped. Please reconnect.</string>
+    <string name="browser_error_title">Cannot connect to the computer</string>
+    <string name="retry">Retry</string>
+    <string name="back_to_connection">Back to connection page</string>
     <string name="external_link_failed">Could not open the external link</string>
     <string name="file_picker_failed">Could not open the attachment picker</string>
     <string name="screen_fit_title">Screen and status bar</string>
