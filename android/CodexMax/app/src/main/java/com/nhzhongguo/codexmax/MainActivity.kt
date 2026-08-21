@@ -198,7 +198,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun toggleLanguage() {
-        val language = resources.configuration.locales[0]?.language ?: "zh"
+        val language = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            resources.configuration.locales[0]?.language ?: "zh"
+        } else {
+            @Suppress("DEPRECATION")
+            resources.configuration.locale.language.ifEmpty { "zh" }
+        }
         AppCompatDelegate.setApplicationLocales(
             LocaleListCompat.forLanguageTags(
                 if (language == "zh") "en" else "zh-CN"
@@ -220,3 +225,4 @@ class MainActivity : ComponentActivity() {
         CodexMonitorService.stop(this)
     }
 }
+
