@@ -104,6 +104,29 @@ const RECONNECT_DELAY_MS = 2000;
 const MAX_RECONNECT_DELAY_MS = 30000;
 const IDLE_PING_INTERVAL_MS = 25000;
 
+// ---- Codex 客户端版本探测 ----
+
+/** 从 CDP 页面标题/URL 中提取 Codex 客户端版本（如 "Codex 3.10.2"）；找不到返回 null */
+function extractCodexVersion(identity) {
+  if (!identity) return null;
+  const match = identity.match(/Codex[^0-9]*v?(\d+)\.(\d+)\.(\d+)/i);
+  if (!match) return null;
+  return `${match[1]}.${match[2]}.${match[3]}`;
+}
+
+/** 与本仓库自动化所适配的已知大版本比较，不匹配时给出降级提示 */
+const KNOWN_COMPAT_MAJOR = 3;
+
+function versionCompatHint(version) {
+  const major = Number(String(version).split('.')[0]);
+  if (!Number.isFinite(major)) return null;
+  if (major !== KNOWN_COMPAT_MAJOR) {
+    console.warn(`[CDP] Codex 客户端版本 ${version} 与自动化适配的主版本 ${KNOWN_COMPAT_MAJOR} 不匹配，界面自动化可能降级或失效。`);
+    return 'unsupported-major';
+  }
+  return 'ok';
+}
+
 class CdpConnection {
   constructor(options = {}) {
     this.host = options.host || DEFAULT_HOST;
@@ -176,9 +199,12 @@ class CdpConnection {
       const target = rows.find(item => item.type === 'page' && /^app:\/\/-\/index\.html/.test(String(item.url || ''))) ||
         rows.find(item => item.type === 'page' && String(item.title || '').toLowerCase().includes('codex')) ||
         rows.find(item => item.type === 'page');
+      const version = extractCodexVersion(target ? String(target.title || '') + ' ' + String(target.url || '') : '');
       return {
         available: Boolean(target && target.webSocketDebuggerUrl),
         port: this.port,
+        version,
+        compatHint: version ? versionCompatHint(version) : null,
         target: target ? { url: target.url, title: target.title, wsUrl: target.webSocketDebuggerUrl } : null,
       };
     } catch (error) {
