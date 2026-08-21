@@ -426,7 +426,8 @@ test('CertificateManager: 纯 Node 生成自签名证书并通过 TLS 握手', a
 
     // X509 解析验证：有效期与 SAN
     const x509 = new crypto.X509Certificate(certPem);
-    assert.ok(x509.validToDate.getTime() > Date.now(), '证书未过期');
+    const validTo = x509.validToDate instanceof Date ? x509.validToDate : new Date(x509.validTo);
+    assert.ok(validTo.getTime() > Date.now(), '证书未过期');
     assert.ok(x509.checkHost('127.0.0.1'), 'SAN 应匹配 127.0.0.1');
     assert.ok(!x509.checkHost('evil.example.com'), '不应匹配未知域名');
 
@@ -599,3 +600,4 @@ test('Scheduler: normalizeScheduledTask 透传并校验 timezone', () => {
   assert.equal(invalid.timezone, '', '非法时区应被清空');
   assert.ok(!invalid.cronDescription.includes('Not/AZone'));
 });
+
