@@ -642,7 +642,7 @@ function scoreDesktopFailureLine(line, text, options = {}) {
 }
 
 function recentCodexDesktopLogFiles(referenceMs = Date.now()) {
-  return walkFiles(CODEX_DESKTOP_LOGS_DIR, file => file.endsWith('.log'))
+  return listCodexDesktopLogFiles()
     .map(file => {
       try {
         const stat = fs.statSync(file);
@@ -777,19 +777,53 @@ function summarizeThreadTitle(value, maxLength = 34) {
   return `${text.slice(0, maxLength).trim()}…`;
 }
 
-function walkFiles(dir, predicate, out = []) {
+function listCodexDesktopLogFiles() {
+  const files = [];
   let entries;
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    entries = fs.readdirSync(CODEX_DESKTOP_LOGS_DIR, { withFileTypes: true });
   } catch {
-    return out;
+    return files;
   }
   for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walkFiles(full, predicate, out);
-    else if (predicate(full)) out.push(full);
+    if (!entry.isFile() || entry.isSymbolicLink() || !/^[A-Za-z0-9._-]+\.log$/.test(entry.name)) continue;
+    files.push(path.join(CODEX_DESKTOP_LOGS_DIR, entry.name));
+    if (files.length >= 40) break;
   }
-  return out;
+  return files;
+}
+
+function listCodexSessionDiskFiles() {
+  const files = [];
+  let years;
+  try {
+    years = fs.readdirSync(CODEX_SESSIONS_DIR, { withFileTypes: true });
+  } catch {
+    return files;
+  }
+  for (const year of years) {
+    if (!/^\d{4}$/.test(year.name) || !year.isDirectory() || year.isSymbolicLink()) continue;
+    const yearDir = path.join(CODEX_SESSIONS_DIR, year.name);
+    let months;
+    try { months = fs.readdirSync(yearDir, { withFileTypes: true }); } catch { continue; }
+    for (const month of months) {
+      if (!/^\d{2}$/.test(month.name) || !month.isDirectory() || month.isSymbolicLink()) continue;
+      const monthDir = path.join(yearDir, month.name);
+      let sessions;
+      try { sessions = fs.readdirSync(monthDir, { withFileTypes: true }); } catch { continue; }
+      for (const session of sessions) {
+        if (files.length >= CODEX_SEARCH_MAX_FILES) return files;
+        if (!session.isFile() || session.isSymbolicLink() || !/^[A-Za-z0-9._-]+\.jsonl$/.test(session.name)) continue;
+        files.push(path.join(monthDir, session.name));
+      }
+    }
+  }
+  for (const entry of years) {
+    if (files.length >= CODEX_SEARCH_MAX_FILES) break;
+    if (!entry.isFile() || entry.isSymbolicLink() || !/^[A-Za-z0-9._-]+\.jsonl$/.test(entry.name)) continue;
+    files.push(path.join(CODEX_SESSIONS_DIR, entry.name));
+  }
+  return files;
 }
 
 function listCodexSessionFiles(options = {}) {
@@ -797,7 +831,7 @@ function listCodexSessionFiles(options = {}) {
   if (!options.force && codexSessionFilesCache.files.length && now - codexSessionFilesCache.at <= CODEX_SESSION_FILE_CACHE_MS) {
     return codexSessionFilesCache.files;
   }
-  const files = walkFiles(CODEX_SESSIONS_DIR, file => file.endsWith('.jsonl'));
+  const files = listCodexSessionDiskFiles();
   codexSessionFilesCache = { at: now, files };
   return files;
 }
@@ -1596,10 +1630,96 @@ async function handlePlugins(req, res) {
   });
 }
 
-function runLocalCommand(command, args, options = {}) {
+function gitCommandError(message = 'Git 参数无效。') {
+  return new Error(message);
+}
+
+function normalizeGitCwd(value) {
+  const cwd = validLocalDirectory(String(value || '').trim());
+  if (!cwd) throw gitCommandError('Git 工作目录无效。');
+  return cwd;
+}
+
+function normalizeGitCommandArgs(args) {
+  if (!Array.isArray(args) || args.some(arg => typeof arg !== 'string' || arg.includes('\0'))) {
+    throw gitCommandError();
+  }
+  if (args.length < 3 || args[0] !== '-C') throw gitCommandError();
+
+  const cwd = normalizeGitCwd(args[1]);
+  const command = args[2];
+  const rest = args.slice(3);
+  const exact = (...expected) => rest.length === expected.length && rest.every((arg, index) => arg === expected[index]);
+  const branchArg = value => {
+    const branch = normalizeGitBranch(value);
+    return branch && branch === value ? branch : '';
+  };
+
+  switch (command) {
+    case 'rev-parse':
+      if (exact('--show-toplevel') || exact('--abbrev-ref', '--symbolic-full-name', '@{u}')) return ['-C', cwd, command, ...rest];
+      break;
+    case 'branch':
+      if (exact('--show-current')) return ['-C', cwd, command, ...rest];
+      break;
+    case 'remote':
+      if (exact('get-url', 'origin')) return ['-C', cwd, command, ...rest];
+      break;
+    case 'status':
+      if (exact('--short') || exact('--porcelain')) return ['-C', cwd, command, ...rest];
+      break;
+    case 'diff':
+      if (exact('--numstat', 'HEAD')) return ['-C', cwd, command, ...rest];
+      if (rest.length === 2 && rest[0] === '--numstat' && rest[1].startsWith('HEAD..')) {
+        const branch = branchArg(rest[1].slice('HEAD..'.length));
+        if (branch) return ['-C', cwd, command, '--numstat', `HEAD..${branch}`];
+      }
+      break;
+    case 'for-each-ref':
+      if (exact('--format=%(refname:short)', 'refs/heads', 'refs/remotes') || exact('--format=%(refname:short)', 'refs/heads')) {
+        return ['-C', cwd, command, ...rest];
+      }
+      break;
+    case 'log':
+      if (exact('-1', '--format=%H%x00%s%x00%an%x00%ad', '--date=iso-strict')) return ['-C', cwd, command, ...rest];
+      if (rest.length === 4 && rest[0] === '-1' && rest[1] === '--format=%H%x00%s%x00%ad' && rest[2] === '--date=iso-strict') {
+        const branch = branchArg(rest[3]);
+        if (branch) return ['-C', cwd, command, '-1', '--format=%H%x00%s%x00%ad', '--date=iso-strict', branch];
+      }
+      break;
+    case 'ls-files':
+      if (exact('--others', '--exclude-standard', '-z')) return ['-C', cwd, command, ...rest];
+      break;
+    case 'switch': {
+      const branch = rest.length === 3 && rest[0] === '--quiet' && rest[1] === '--' ? branchArg(rest[2]) : '';
+      if (branch) return ['-C', cwd, command, '--quiet', '--', branch];
+      break;
+    }
+    case 'add':
+      if (exact('--all')) return ['-C', cwd, command, ...rest];
+      break;
+    case 'commit':
+      if (rest.length === 2 && rest[0] === '-m' && rest[1].trim() && rest[1].length <= 180 && !/[\r\n]/.test(rest[1])) {
+        return ['-C', cwd, command, '-m', rest[1]];
+      }
+      break;
+    case 'push':
+      if (rest.length === 0) return ['-C', cwd, command];
+      break;
+  }
+
+  throw gitCommandError();
+}
+
+function runGit(args, options = {}) {
+  let safeArgs;
+  try {
+    safeArgs = normalizeGitCommandArgs(args);
+  } catch (error) {
+    return Promise.reject(error);
+  }
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd || undefined,
+    const child = spawn('git', safeArgs, {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -1615,14 +1735,14 @@ function runLocalCommand(command, args, options = {}) {
     };
     const timer = setTimeout(() => {
       try { child.kill(); } catch {}
-      finish(new Error(`${command} 命令超时。`));
+      finish(new Error('git 命令超时。'));
     }, Math.max(1000, Number(options.timeoutMs) || 8000));
     child.stdout.on('data', chunk => { stdout += String(chunk || ''); });
     child.stderr.on('data', chunk => { stderr += String(chunk || ''); });
     child.on('error', error => finish(error));
     child.on('close', code => {
       if (code === 0) return finish(null, { stdout, stderr });
-      const error = new Error(stderr.trim() || `${command} exited with code ${code}`);
+      const error = new Error(stderr.trim() || `git exited with code ${code}`);
       error.code = code;
       finish(error);
     });
@@ -1669,30 +1789,18 @@ function countTextFileLines(buffer) {
 async function readUntrackedGitChanges(root) {
   let output = '';
   try {
-    const result = await runLocalCommand('git', ['-C', root, 'ls-files', '--others', '--exclude-standard', '-z'], { timeoutMs: 10000 });
+    const result = await runGit(['-C', root, 'ls-files', '--others', '--exclude-standard', '-z'], { timeoutMs: 10000 });
     output = String(result.stdout || '');
   } catch {
     return { additions: 0, files: 0 };
   }
 
-  const resolvedRoot = path.resolve(root);
-  const rootPrefix = `${resolvedRoot}${path.sep}`;
-  return output.split('\0').reduce((summary, relativePath) => {
-    if (!relativePath) return summary;
-    const absolutePath = path.resolve(resolvedRoot, relativePath);
-    if (!absolutePath.startsWith(rootPrefix)) return summary;
-    try {
-      const stat = fs.lstatSync(absolutePath);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > ENVIRONMENT_MAX_UNTRACKED_TEXT_BYTES) return summary;
-      const lines = countTextFileLines(fs.readFileSync(absolutePath));
-      if (lines === null) return summary;
-      summary.additions += lines;
-      summary.files += 1;
-    } catch {
-      // A file can disappear while Git status is being collected.
-    }
-    return summary;
-  }, { additions: 0, files: 0 });
+  const files = output.split('\0').filter(relativePath => (
+    relativePath &&
+    !path.isAbsolute(relativePath) &&
+    !relativePath.split(/[\\/]+/).includes('..')
+  )).length;
+  return { additions: 0, files };
 }
 
 function normalizeGitBranch(value = '') {
@@ -1724,7 +1832,7 @@ async function readGitEnvironment(cwd, compareBranch = '') {
   };
   let root;
   try {
-    const result = await runLocalCommand('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { timeoutMs: 8000 });
+    const result = await runGit(['-C', cwd, 'rev-parse', '--show-toplevel'], { timeoutMs: 8000 });
     root = String(result.stdout || '').trim();
   } catch {
     return environment;
@@ -1732,14 +1840,14 @@ async function readGitEnvironment(cwd, compareBranch = '') {
   if (!root) return environment;
 
   const results = await Promise.allSettled([
-    runLocalCommand('git', ['-C', root, 'branch', '--show-current'], { timeoutMs: 8000 }),
-    runLocalCommand('git', ['-C', root, 'remote', 'get-url', 'origin'], { timeoutMs: 8000 }),
-    runLocalCommand('git', ['-C', root, 'status', '--short'], { timeoutMs: 8000 }),
-    runLocalCommand('git', ['-C', root, 'diff', '--numstat', 'HEAD'], { timeoutMs: 10000 }),
+    runGit(['-C', root, 'branch', '--show-current'], { timeoutMs: 8000 }),
+    runGit(['-C', root, 'remote', 'get-url', 'origin'], { timeoutMs: 8000 }),
+    runGit(['-C', root, 'status', '--short'], { timeoutMs: 8000 }),
+    runGit(['-C', root, 'diff', '--numstat', 'HEAD'], { timeoutMs: 10000 }),
     readUntrackedGitChanges(root),
-    runLocalCommand('git', ['-C', root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes'], { timeoutMs: 8000 }),
-    runLocalCommand('git', ['-C', root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'], { timeoutMs: 8000 }),
-    runLocalCommand('git', ['-C', root, 'log', '-1', '--format=%H%x00%s%x00%an%x00%ad', '--date=iso-strict'], { timeoutMs: 8000 }),
+    runGit(['-C', root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes'], { timeoutMs: 8000 }),
+    runGit(['-C', root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'], { timeoutMs: 8000 }),
+    runGit(['-C', root, 'log', '-1', '--format=%H%x00%s%x00%an%x00%ad', '--date=iso-strict'], { timeoutMs: 8000 }),
   ]);
   const valueAt = index => results[index]?.status === 'fulfilled' ? String(results[index].value.stdout || '').trim() : '';
   const commitParts = valueAt(6).split('\\0');
@@ -1771,8 +1879,8 @@ async function readGitEnvironment(cwd, compareBranch = '') {
   const compare = normalizeGitBranch(compareBranch);
   if (compare && environment.git.branches.includes(compare) && compare !== environment.git.branch) {
     const compareResults = await Promise.allSettled([
-      runLocalCommand('git', ['-C', root, 'diff', '--numstat', `HEAD..${compare}`], { timeoutMs: 10000 }),
-      runLocalCommand('git', ['-C', root, 'log', '-1', '--format=%H%x00%s%x00%ad', '--date=iso-strict', compare], { timeoutMs: 8000 }),
+      runGit(['-C', root, 'diff', '--numstat', `HEAD..${compare}`], { timeoutMs: 10000 }),
+      runGit(['-C', root, 'log', '-1', '--format=%H%x00%s%x00%ad', '--date=iso-strict', compare], { timeoutMs: 8000 }),
     ]);
     const compareStat = compareResults[0]?.status === 'fulfilled' ? parseGitNumstat(compareResults[0].value.stdout) : null;
     const compareCommit = compareResults[1]?.status === 'fulfilled' ? String(compareResults[1].value.stdout || '').trim().split('\\0') : [];
@@ -1904,11 +2012,11 @@ async function handleGitAction(req, res) {
         logGit('completed', '', { branch, gitDetail: gitDetail() });
         return json(res, 200, { ok: true, action, branch, environment: target.environment, message: '当前已经在这个分支上。' });
       }
-      const status = await runLocalCommand('git', ['-C', root, 'status', '--porcelain'], { timeoutMs: 8000 });
+      const status = await runGit(['-C', root, 'status', '--porcelain'], { timeoutMs: 8000 });
       if (String(status.stdout || '').trim()) {
         throw gitActionError('工作区有未提交改动，请先提交或暂存后再切换分支。', 'GIT_WORKTREE_DIRTY', 409);
       }
-      await runLocalCommand('git', ['-C', root, 'switch', '--quiet', '--', branch], { timeoutMs: 15000 });
+      await runGit(['-C', root, 'switch', '--quiet', '--', branch], { timeoutMs: 15000 });
       const environment = await readGitEnvironment(target.cwd);
       logGit('completed', '', { branch, gitDetail: gitDetail() });
       return json(res, 200, { ok: true, action, branch, environment, message: `已切换到 ${branch}。` });
@@ -1918,10 +2026,10 @@ async function handleGitAction(req, res) {
       const message = String(payload.message || '').replace(/\s+/g, ' ').trim();
       if (!message) throw gitActionError('提交说明不能为空。', 'EMPTY_COMMIT_MESSAGE', 400);
       if (message.length > 180) throw gitActionError('提交说明不能超过 180 个字符。', 'COMMIT_MESSAGE_TOO_LONG', 400);
-      const status = await runLocalCommand('git', ['-C', root, 'status', '--porcelain'], { timeoutMs: 8000 });
+      const status = await runGit(['-C', root, 'status', '--porcelain'], { timeoutMs: 8000 });
       if (!String(status.stdout || '').trim()) throw gitActionError('工作区没有可提交的改动。', 'GIT_WORKTREE_CLEAN', 409);
-      await runLocalCommand('git', ['-C', root, 'add', '--all'], { timeoutMs: 20000 });
-      const commit = await runLocalCommand('git', ['-C', root, 'commit', '-m', message], { timeoutMs: 30000 });
+      await runGit(['-C', root, 'add', '--all'], { timeoutMs: 20000 });
+      const commit = await runGit(['-C', root, 'commit', '-m', message], { timeoutMs: 30000 });
       const environment = await readGitEnvironment(target.cwd);
       const hash = String(commit.stdout || '').match(/\[[^\]]+ ([a-f0-9]{7,})\]/)?.[1] || '';
       logGit('completed', '', { commitHash: hash, gitDetail: gitDetail() });
@@ -1938,11 +2046,11 @@ async function handleGitAction(req, res) {
       throw gitActionError('当前仓库没有 origin 远程地址，无法推送。', 'GIT_REMOTE_REQUIRED', 409);
     }
     try {
-      await runLocalCommand('git', ['-C', root, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { timeoutMs: 8000 });
+      await runGit(['-C', root, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { timeoutMs: 8000 });
     } catch {
       throw gitActionError('当前分支还没有设置上游分支，暂时不能自动推送。', 'GIT_UPSTREAM_REQUIRED', 409);
     }
-    const push = await runLocalCommand('git', ['-C', root, 'push'], { timeoutMs: 60000 });
+    const push = await runGit(['-C', root, 'push'], { timeoutMs: 60000 });
     const environment = await readGitEnvironment(target.cwd);
     logGit('completed', '', { remote: target.environment.git.remote, gitDetail: gitDetail() });
     return json(res, 200, {
@@ -2037,7 +2145,7 @@ async function listGitHubPullRequests(repository) {
 async function readGitHubProject(cwd) {
   let origin;
   try {
-    const result = await runLocalCommand('git', ['-C', cwd, 'remote', 'get-url', 'origin'], { timeoutMs: 8000 });
+    const result = await runGit(['-C', cwd, 'remote', 'get-url', 'origin'], { timeoutMs: 8000 });
     origin = String(result.stdout || '').trim();
   } catch {
     return null;
@@ -2723,23 +2831,6 @@ function joinToolTargets(values) {
   return list.join(', ');
 }
 
-function extractCommandFiles(cmd) {
-  const files = [];
-  const token = shellQuotePattern();
-  const commandPatterns = [
-    new RegExp(String.raw`\bsed\s+(?:-[A-Za-z]+\s+)?${token}\s+(${token})`, 'g'),
-    new RegExp(String.raw`\bnl\s+(?:-[A-Za-z]+\s+)*(${token})`, 'g'),
-    new RegExp(String.raw`\b(?:cat|head|tail)\s+(?:-[A-Za-z0-9]+\s+)*(?:-n\s+\d+\s+)?(${token})`, 'g'),
-  ];
-  for (const re of commandPatterns) {
-    let match;
-    while ((match = re.exec(cmd))) files.push(match[1]);
-  }
-  const redirectMatch = cmd.match(/<\s*([^\s|;&]+)/);
-  if (redirectMatch && !/<<\s*$/.test(cmd.slice(Math.max(0, redirectMatch.index - 3), redirectMatch.index + 1))) files.push(redirectMatch[1]);
-  return uniqueList(files.filter(isLikelyToolFile), 4);
-}
-
 function extractSearchTargets(cmd) {
   const afterGlob = cmd.replace(/--glob\s+(?:"[^"]+"|'[^']+'|\S+)/g, '');
   const matches = [...afterGlob.matchAll(/(?:^|\s)([./~\w-][^\s|;&]*\.(?:js|ts|tsx|jsx|html|css|json|jsonl|md|txt|sh|swift|py|yml|yaml|webmanifest))(?:\s|$)/gi)];
@@ -2774,9 +2865,6 @@ function formatToolCall(payload, options = {}) {
 
   if (name === 'exec_command' || name === 'shell_command') {
     const cmd = String(args.command || args.cmd || args.raw || '').trim();
-    const files = extractCommandFiles(cmd);
-    if (files.length) return `Read ${files.join(', ')}`;
-
     if (/\b(?:rg|grep)\b/.test(cmd)) {
       const targets = joinToolTargets(extractSearchTargets(cmd));
       return targets ? `Search ${targets}` : 'Search project files';
@@ -3790,9 +3878,13 @@ function decodeAttachment(attachment, index) {
   const buffer = Buffer.from(match[2], 'base64');
   if (!buffer.length || buffer.length > MAX_ATTACHMENT_BYTES) throw new Error(`单张图片太大，请控制在 ${formatBytes(MAX_ATTACHMENT_BYTES)} 以内。`);
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-  const ext = path.extname(attachment.name || '') || extensionForMime(mime);
+  const ext = extensionForMime(mime);
   const fileName = `${Date.now()}-${index}-${sanitizeFileName(attachment.name || `image${ext}`)}`;
-  const filePath = path.join(UPLOAD_DIR, fileName.endsWith(ext) ? fileName : `${fileName}${ext}`);
+  const safeName = fileName.endsWith(ext) ? fileName : `${fileName}${ext}`;
+  const uploadRoot = path.resolve(UPLOAD_DIR);
+  const filePath = path.resolve(uploadRoot, safeName);
+  const relative = path.relative(uploadRoot, filePath);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('图片文件名不正确。');
   fs.writeFileSync(filePath, buffer);
   return { filePath, mime, name: attachment.name || path.basename(filePath), size: buffer.length };
 }
@@ -3828,14 +3920,7 @@ async function pressPasteAndEnter() {
 }
 
 async function typeTextAndEnter(text) {
-  if (platform.typeText) {
-    await platform.typeText(text);
-    await delay(TEXT_PASTE_SETTLE_MS);
-    await pressEnter();
-    return;
-  }
-  await copyTextToClipboard(text);
-  await pressPasteAndEnter();
+  await pasteTextAndEnter(text);
 }
 
 async function pasteTextAndEnter(text) {
@@ -4577,6 +4662,16 @@ const STATIC_CACHE_MAX_BYTES = 256 * 1024;
 // 到期后仍会做 mtime/size 校验，保证文件更新可感知
 const STATIC_CACHE_STAT_TTL_MS = 1000;
 
+function resolveStaticFilePath(rootDir, requestPathname) {
+  const relativePath = String(requestPathname || '/').replace(/^\/+/, '') || 'index.html';
+  const segments = relativePath.split('/').filter(Boolean);
+  if (segments.some(segment => segment === '.' || segment === '..' || segment.includes('\0'))) return '';
+  const root = path.resolve(rootDir);
+  const filePath = path.resolve(root, ...segments);
+  const relative = path.relative(root, filePath);
+  return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? filePath : '';
+}
+
 function serveStatic(req, res) {
   let url;
   try {
@@ -4594,9 +4689,8 @@ function serveStatic(req, res) {
   }
   if (pathname === '/') pathname = '/index.html';
 
-  const filePath = path.normalize(path.join(PUBLIC_DIR, pathname));
-  const relative = path.relative(PUBLIC_DIR, filePath);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+  const filePath = resolveStaticFilePath(PUBLIC_DIR, pathname);
+  if (!filePath) {
     res.writeHead(403, { 'x-content-type-options': 'nosniff' });
     return res.end('Forbidden');
   }

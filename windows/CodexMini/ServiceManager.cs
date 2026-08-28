@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Net.NetworkInformation;
 using System.Security.Cryptography;
 using System.Text;
@@ -184,7 +185,7 @@ internal sealed class ServiceManager
         start.Environment["CODEX_MAX_APP_NAME"] = DisplayName;
         start.Environment["CODEX_MAX_STATE_DIR"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex-max");
 
-        var process = Process.Start(start) ?? throw new InvalidOperationException($"启动 {DisplayName} 服务失败。");
+        var process = StartManagedServiceProcess(start) ?? throw new InvalidOperationException($"启动 {DisplayName} 服务失败。");
         _ = Task.Run(() => AppendProcessOutputAsync(process.StandardOutput, stdoutPath));
         _ = Task.Run(() => AppendProcessOutputAsync(process.StandardError, stderrPath));
         config.Pid = process.Id;
@@ -228,7 +229,10 @@ internal sealed class ServiceManager
         config = ReadConfig();
         using var launchHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(35) };
         using var response = await launchHttp.PostAsJsonAsync(
-            $"http://127.0.0.1:{config.Port}/codex/cdp-launch?token={Uri.EscapeDataString(config.Token)}",
+            BuildLoopbackServiceUri(config, "/codex/cdp-launch", new Dictionary<string, string?>
+            {
+                ["token"] = config.Token
+            }),
             new { forceRestart = true },
             JsonOptions
         );
@@ -243,7 +247,7 @@ internal sealed class ServiceManager
     public async Task OpenWebAsync()
     {
         if (!await CheckHealthAsync(ReadConfig())) await StartAsync();
-        Process.Start(new ProcessStartInfo(PrimaryEntryUrl()) { UseShellExecute = true });
+        StartShellOpenHttpUrl(PrimaryEntryUrl());
     }
 
     public async Task CopyLocalLinkAsync()
@@ -255,7 +259,7 @@ internal sealed class ServiceManager
     public void OpenLogs()
     {
         Directory.CreateDirectory(logsDir);
-        Process.Start(new ProcessStartInfo(logsDir) { UseShellExecute = true });
+        StartShellOpenDirectory(logsDir);
     }
 
     private void MigrateLegacyStateIfNeeded()
@@ -298,6 +302,130 @@ internal sealed class ServiceManager
         }
     }
 
+    private static Uri BuildLoopbackServiceUri(LauncherConfig config, string path, IReadOnlyDictionary<string, string?>? query = null)
+    {
+        if (config.Port < 1 || config.Port > 65535)
+        {
+            throw new InvalidOperationException("本地服务端口无效。");
+        }
+
+        var builder = new UriBuilder(Uri.UriSchemeHttp, IPAddress.Loopback.ToString(), config.Port, NormalizeHttpPath(path));
+        if (query is not null && query.Count > 0)
+        {
+            builder.Query = string.Join("&", query
+                .Where(item => item.Value is not null)
+                .Select(item => $"{Uri.EscapeDataString(item.Key)}={Uri.EscapeDataString(item.Value ?? "")}"));
+        }
+        return ValidateLoopbackHttpUri(builder.Uri);
+    }
+
+    private static Uri ValidateLoopbackHttpUri(Uri uri)
+    {
+        if (!uri.IsAbsoluteUri || uri.Scheme != Uri.UriSchemeHttp)
+        {
+            throw new InvalidOperationException("本地服务 URL 必须使用 http。");
+        }
+        if (!IPAddress.TryParse(uri.Host, out var host) || !IPAddress.IsLoopback(host))
+        {
+            throw new InvalidOperationException("本地服务 URL 必须指向环回地址。");
+        }
+        if (uri.Port < 1 || uri.Port > 65535)
+        {
+            throw new InvalidOperationException("本地服务 URL 端口无效。");
+        }
+        return uri;
+    }
+
+    private static string NormalizeHttpPath(string path)
+    {
+        var value = string.IsNullOrWhiteSpace(path) ? "/" : path.Trim();
+        return value.StartsWith('/', StringComparison.Ordinal) ? value : "/" + value;
+    }
+
+    private static Process? StartManagedServiceProcess(ProcessStartInfo start)
+    {
+        if (start.UseShellExecute || !Path.GetFileName(start.FileName).Equals("node.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("只能启动受控的 Node.js 服务进程。");
+        }
+        if (start.ArgumentList.Count != 1 || !start.ArgumentList[0].Equals("server.js", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("服务进程参数无效。");
+        }
+        return StartPreparedProcess(start);
+    }
+
+    private static Process? StartCheckedProcess(ProcessStartInfo start, string expectedFileName)
+    {
+        if (start.UseShellExecute || !Path.GetFileName(start.FileName).Equals(expectedFileName, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("进程启动目标无效。");
+        }
+        return StartPreparedProcess(start);
+    }
+
+    private static Process? StartPreparedProcess(ProcessStartInfo start)
+    {
+        var process = new Process { StartInfo = start };
+        if (process.Start()) return process;
+        process.Dispose();
+        return null;
+    }
+
+    private static Process? StartCheckedShellOpen(ProcessStartInfo start)
+    {
+        if (!start.UseShellExecute || string.IsNullOrWhiteSpace(start.FileName))
+        {
+            throw new InvalidOperationException("Shell 打开目标无效。");
+        }
+        return StartPreparedProcess(start);
+    }
+
+    private static void StartShellOpenHttpUrl(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            throw new InvalidOperationException("打开的 URL 无效。");
+        }
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+        {
+            throw new InvalidOperationException("只能打开 http/https URL。");
+        }
+        if (!uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) &&
+            (!IPAddress.TryParse(uri.Host, out var address) || IPAddress.IsLoopback(address) == false && !IsUsableLanAddress(address)))
+        {
+            throw new InvalidOperationException("只能打开本地服务 URL。");
+        }
+        var start = new ProcessStartInfo(uri.ToString()) { UseShellExecute = true };
+        StartCheckedShellOpen(start);
+    }
+
+    private static void StartShellOpenDirectory(string directory)
+    {
+        var fullPath = Path.GetFullPath(directory);
+        if (!Directory.Exists(fullPath))
+        {
+            throw new InvalidOperationException("打开的目录不存在。");
+        }
+        var start = new ProcessStartInfo(fullPath) { UseShellExecute = true };
+        StartCheckedShellOpen(start);
+    }
+
+    private static void StartExplorerSelectFile(string file)
+    {
+        var fullPath = Path.GetFullPath(file);
+        if (!File.Exists(fullPath))
+        {
+            throw new InvalidOperationException("打开的文件不存在。");
+        }
+        var start = new ProcessStartInfo("explorer.exe")
+        {
+            UseShellExecute = false
+        };
+        start.ArgumentList.Add("/select," + fullPath);
+        StartCheckedProcess(start, "explorer.exe");
+    }
+
     private async Task<bool> CheckHealthAsync(LauncherConfig config)
     {
         return (await GetHealthAsync(config)).Ok;
@@ -308,8 +436,11 @@ internal sealed class ServiceManager
         var config = ReadConfig();
         try
         {
-            var url = $"http://127.0.0.1:{config.Port}/codex/config?token={Uri.EscapeDataString(config.Token)}";
-            using var response = await http.GetAsync(url);
+            var uri = BuildLoopbackServiceUri(config, "/codex/config", new Dictionary<string, string?>
+            {
+                ["token"] = config.Token
+            });
+            using var response = await http.GetAsync(uri);
             if (!response.IsSuccessStatusCode) return null;
             var payload = await response.Content.ReadFromJsonAsync<ClientConfigResponse>(JsonOptions);
             var update = payload?.Update;
@@ -356,14 +487,17 @@ internal sealed class ServiceManager
         try
         {
             // /codex/health 不校验 token，健康状态必须走需鉴权的 /codex/config
-            using var response = await http.GetAsync($"http://127.0.0.1:{config.Port}/codex/config?token={Uri.EscapeDataString(config.Token)}");
+            using var response = await http.GetAsync(BuildLoopbackServiceUri(config, "/codex/config", new Dictionary<string, string?>
+            {
+                ["token"] = config.Token
+            }));
             if (!response.IsSuccessStatusCode) return new HealthSnapshot(false, "");
             var payload = await response.Content.ReadFromJsonAsync<ClientConfigResponse>(JsonOptions);
             if (payload?.Ok != true) return new HealthSnapshot(false, "");
             var controlMode = "";
             try
             {
-                using var healthResponse = await http.GetAsync($"http://127.0.0.1:{config.Port}/codex/health");
+                using var healthResponse = await http.GetAsync(BuildLoopbackServiceUri(config, "/codex/health"));
                 var health = await healthResponse.Content.ReadFromJsonAsync<HealthResponse>(JsonOptions);
                 controlMode = health?.ControlMode ?? "";
             }
@@ -382,8 +516,11 @@ internal sealed class ServiceManager
     {
         try
         {
-            var url = $"http://127.0.0.1:{config.Port}/codex/threads?limit=20&token={Uri.EscapeDataString(config.Token)}";
-            var summary = await http.GetFromJsonAsync<ThreadSummary>(url);
+            var summary = await http.GetFromJsonAsync<ThreadSummary>(BuildLoopbackServiceUri(config, "/codex/threads", new Dictionary<string, string?>
+            {
+                ["limit"] = "20",
+                ["token"] = config.Token
+            }));
             var rows = summary?.Threads ?? new List<ThreadRow>();
             var title = rows.FirstOrDefault()?.Title ?? rows.FirstOrDefault()?.Name ?? "暂无线程";
             return (rows.Count, title);
@@ -527,19 +664,14 @@ internal sealed class ServiceManager
     {
         if (File.Exists(file))
         {
-            var start = new ProcessStartInfo("explorer.exe")
-            {
-                UseShellExecute = true,
-                ArgumentList = { $"/select,{file}" }
-            };
-            Process.Start(start);
+            StartExplorerSelectFile(file);
             return;
         }
 
         var directory = Path.GetDirectoryName(file);
         if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
         {
-            Process.Start(new ProcessStartInfo(directory) { UseShellExecute = true });
+            StartShellOpenDirectory(directory);
             throw new InvalidOperationException($"{missingMessage}{Environment.NewLine}已打开目录：{directory}");
         }
 
@@ -695,7 +827,7 @@ internal sealed class ServiceManager
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
-            using var process = Process.Start(start);
+            using var process = StartCheckedProcess(start, "netstat.exe");
             if (process is null) return 0;
             var output = process.StandardOutput.ReadToEnd();
             process.WaitForExit(2500);
@@ -799,16 +931,21 @@ internal sealed class ServiceManager
     {
         try
         {
-            var escaped = $"ProcessId = {pid}";
-            var start = new ProcessStartInfo("powershell.exe",
-                $"-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"(Get-CimInstance Win32_Process -Filter '{escaped}').CommandLine\"")
+            var start = new ProcessStartInfo("powershell.exe")
             {
                 CreateNoWindow = true,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
-            using var process = Process.Start(start);
+            start.ArgumentList.Add("-NoLogo");
+            start.ArgumentList.Add("-NoProfile");
+            start.ArgumentList.Add("-NonInteractive");
+            start.ArgumentList.Add("-ExecutionPolicy");
+            start.ArgumentList.Add("Bypass");
+            start.ArgumentList.Add("-Command");
+            start.ArgumentList.Add("(Get-CimInstance Win32_Process -Filter 'ProcessId = " + pid.ToString() + "').CommandLine");
+            using var process = StartCheckedProcess(start, "powershell.exe");
             if (process is null) return "";
             var output = process.StandardOutput.ReadToEnd();
             process.WaitForExit(2500);

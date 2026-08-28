@@ -96,7 +96,7 @@ test('resolved server notifications clear stale pending approvals', () => {
 test('workspace catalog wrappers use the App Server list methods and normalize data arrays', async () => {
   const { server } = createServer();
   const calls = [];
-  server.request = async (method, params) => {
+  server.call = async (method, params) => {
     calls.push({ method, params });
     if (method === 'plugin/list') return { marketplaces: [] };
     if (method === 'skills/list') return { data: [{ cwd: 'C:\\work', skills: [] }] };
@@ -121,7 +121,7 @@ test('workspace catalog wrappers use the App Server list methods and normalize d
 test('thread management wrappers use documented App Server actions', async () => {
   const { server } = createServer();
   const calls = [];
-  server.request = async (method, params) => {
+  server.call = async (method, params) => {
     calls.push({ method, params });
     if (method === 'review/start') {
       return { reviewThreadId: 'thread-1', turn: { id: 'turn-review' } };

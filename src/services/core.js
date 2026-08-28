@@ -46,18 +46,33 @@ function fileCacheSignature(stat) {
   return stat ? `${stat.size}:${stat.mtimeMs}` : '';
 }
 
-function walkFiles(dir, predicate, out = []) {
-  let entries;
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return out;
-  }
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walkFiles(full, predicate, out);
-    else if (predicate(full)) out.push(full);
-  }
+function walkFiles(rootDir, predicate, out = []) {
+  const root = path.resolve(rootDir || '');
+  if (!root) return out;
+
+  const visit = (dir) => {
+    const resolvedDir = path.resolve(dir);
+    const relativeDir = path.relative(root, resolvedDir);
+    if (relativeDir.startsWith('..') || path.isAbsolute(relativeDir)) return;
+
+    let entries;
+    try {
+      entries = fs.readdirSync(resolvedDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name === '.' || entry.name === '..') continue;
+      const full = path.resolve(resolvedDir, entry.name);
+      const relative = path.relative(root, full);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) continue;
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) visit(full);
+      else if (entry.isFile() && predicate(full)) out.push(full);
+    }
+  };
+
+  visit(root);
   return out;
 }
 

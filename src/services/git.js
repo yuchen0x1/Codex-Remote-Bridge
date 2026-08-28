@@ -7,10 +7,96 @@ const https = require('https');
 const { spawn } = require('child_process');
 const { isCodexThreadId, validLocalDirectory, displayPathName, truncateText, normalizeIsoTimestamp, boundedSet } = require('./core');
 
-function runLocalCommand(command, args, options = {}) {
+function gitCommandError(message = 'Git 参数无效。') {
+  return new Error(message);
+}
+
+function normalizeGitCwd(value) {
+  const cwd = validLocalDirectory(String(value || '').trim());
+  if (!cwd) throw gitCommandError('Git 工作目录无效。');
+  return cwd;
+}
+
+function normalizeGitCommandArgs(args) {
+  if (!Array.isArray(args) || args.some(arg => typeof arg !== 'string' || arg.includes('\0'))) {
+    throw gitCommandError();
+  }
+  if (args.length < 3 || args[0] !== '-C') throw gitCommandError();
+
+  const cwd = normalizeGitCwd(args[1]);
+  const command = args[2];
+  const rest = args.slice(3);
+  const exact = (...expected) => rest.length === expected.length && rest.every((arg, index) => arg === expected[index]);
+  const branchArg = value => {
+    const branch = normalizeGitBranch(value);
+    return branch && branch === value ? branch : '';
+  };
+
+  switch (command) {
+    case 'rev-parse':
+      if (exact('--show-toplevel') || exact('--abbrev-ref', '--symbolic-full-name', '@{u}')) return ['-C', cwd, command, ...rest];
+      break;
+    case 'branch':
+      if (exact('--show-current')) return ['-C', cwd, command, ...rest];
+      break;
+    case 'remote':
+      if (exact('get-url', 'origin')) return ['-C', cwd, command, ...rest];
+      break;
+    case 'status':
+      if (exact('--short') || exact('--porcelain')) return ['-C', cwd, command, ...rest];
+      break;
+    case 'diff':
+      if (exact('--numstat', 'HEAD')) return ['-C', cwd, command, ...rest];
+      if (rest.length === 2 && rest[0] === '--numstat' && rest[1].startsWith('HEAD..')) {
+        const branch = branchArg(rest[1].slice('HEAD..'.length));
+        if (branch) return ['-C', cwd, command, '--numstat', `HEAD..${branch}`];
+      }
+      break;
+    case 'for-each-ref':
+      if (exact('--format=%(refname:short)', 'refs/heads', 'refs/remotes') || exact('--format=%(refname:short)', 'refs/heads')) {
+        return ['-C', cwd, command, ...rest];
+      }
+      break;
+    case 'log':
+      if (exact('-1', '--format=%H%x00%s%x00%an%x00%ad', '--date=iso-strict')) return ['-C', cwd, command, ...rest];
+      if (rest.length === 4 && rest[0] === '-1' && rest[1] === '--format=%H%x00%s%x00%ad' && rest[2] === '--date=iso-strict') {
+        const branch = branchArg(rest[3]);
+        if (branch) return ['-C', cwd, command, '-1', '--format=%H%x00%s%x00%ad', '--date=iso-strict', branch];
+      }
+      break;
+    case 'ls-files':
+      if (exact('--others', '--exclude-standard', '-z')) return ['-C', cwd, command, ...rest];
+      break;
+    case 'switch': {
+      const branch = rest.length === 3 && rest[0] === '--quiet' && rest[1] === '--' ? branchArg(rest[2]) : '';
+      if (branch) return ['-C', cwd, command, '--quiet', '--', branch];
+      break;
+    }
+    case 'add':
+      if (exact('--all')) return ['-C', cwd, command, ...rest];
+      break;
+    case 'commit':
+      if (rest.length === 2 && rest[0] === '-m' && rest[1].trim() && rest[1].length <= 180 && !/[\r\n]/.test(rest[1])) {
+        return ['-C', cwd, command, '-m', rest[1]];
+      }
+      break;
+    case 'push':
+      if (rest.length === 0) return ['-C', cwd, command];
+      break;
+  }
+
+  throw gitCommandError();
+}
+
+function runGit(args, options = {}) {
+  let safeArgs;
+  try {
+    safeArgs = normalizeGitCommandArgs(args);
+  } catch (error) {
+    return Promise.reject(error);
+  }
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd || undefined,
+    const child = spawn('git', safeArgs, {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -26,14 +112,14 @@ function runLocalCommand(command, args, options = {}) {
     };
     const timer = setTimeout(() => {
       try { child.kill(); } catch {}
-      finish(new Error(`${command} 命令超时。`));
+      finish(new Error('git 命令超时。'));
     }, Math.max(1000, Number(options.timeoutMs) || 8000));
     child.stdout.on('data', chunk => { stdout += String(chunk || ''); });
     child.stderr.on('data', chunk => { stderr += String(chunk || ''); });
     child.on('error', error => finish(error));
     child.on('close', code => {
       if (code === 0) return finish(null, { stdout, stderr });
-      const error = new Error(stderr.trim() || `${command} exited with code ${code}`);
+      const error = new Error(stderr.trim() || `git exited with code ${code}`);
       error.code = code;
       finish(error);
     });
@@ -80,30 +166,18 @@ function countTextFileLines(buffer) {
 async function readUntrackedGitChanges(root) {
   let output = '';
   try {
-    const result = await runLocalCommand('git', ['-C', root, 'ls-files', '--others', '--exclude-standard', '-z'], { timeoutMs: 10000 });
+    const result = await runGit(['-C', root, 'ls-files', '--others', '--exclude-standard', '-z'], { timeoutMs: 10000 });
     output = String(result.stdout || '');
   } catch {
     return { additions: 0, files: 0 };
   }
 
-  const resolvedRoot = path.resolve(root);
-  const rootPrefix = `${resolvedRoot}${path.sep}`;
-  return output.split('\0').reduce((summary, relativePath) => {
-    if (!relativePath) return summary;
-    const absolutePath = path.resolve(resolvedRoot, relativePath);
-    if (!absolutePath.startsWith(rootPrefix)) return summary;
-    try {
-      const stat = fs.lstatSync(absolutePath);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > ENVIRONMENT_MAX_UNTRACKED_TEXT_BYTES) return summary;
-      const lines = countTextFileLines(fs.readFileSync(absolutePath));
-      if (lines === null) return summary;
-      summary.additions += lines;
-      summary.files += 1;
-    } catch {
-      // A file can disappear while Git status is being collected.
-    }
-    return summary;
-  }, { additions: 0, files: 0 });
+  const files = output.split('\0').filter(relativePath => (
+    relativePath &&
+    !path.isAbsolute(relativePath) &&
+    !relativePath.split(/[\\/]+/).includes('..')
+  )).length;
+  return { additions: 0, files };
 }
 
 function normalizeGitBranch(value = '') {
@@ -135,7 +209,7 @@ async function readGitEnvironment(cwd, compareBranch = '') {
   };
   let root;
   try {
-    const result = await runLocalCommand('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { timeoutMs: 8000 });
+    const result = await runGit(['-C', cwd, 'rev-parse', '--show-toplevel'], { timeoutMs: 8000 });
     root = String(result.stdout || '').trim();
   } catch {
     return environment;
@@ -143,14 +217,14 @@ async function readGitEnvironment(cwd, compareBranch = '') {
   if (!root) return environment;
 
   const results = await Promise.allSettled([
-    runLocalCommand('git', ['-C', root, 'branch', '--show-current'], { timeoutMs: 8000 }),
-    runLocalCommand('git', ['-C', root, 'remote', 'get-url', 'origin'], { timeoutMs: 8000 }),
-    runLocalCommand('git', ['-C', root, 'status', '--short'], { timeoutMs: 8000 }),
-    runLocalCommand('git', ['-C', root, 'diff', '--numstat', 'HEAD'], { timeoutMs: 10000 }),
+    runGit(['-C', root, 'branch', '--show-current'], { timeoutMs: 8000 }),
+    runGit(['-C', root, 'remote', 'get-url', 'origin'], { timeoutMs: 8000 }),
+    runGit(['-C', root, 'status', '--short'], { timeoutMs: 8000 }),
+    runGit(['-C', root, 'diff', '--numstat', 'HEAD'], { timeoutMs: 10000 }),
     readUntrackedGitChanges(root),
-    runLocalCommand('git', ['-C', root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes'], { timeoutMs: 8000 }),
-    runLocalCommand('git', ['-C', root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'], { timeoutMs: 8000 }),
-    runLocalCommand('git', ['-C', root, 'log', '-1', '--format=%H%x00%s%x00%an%x00%ad', '--date=iso-strict'], { timeoutMs: 8000 }),
+    runGit(['-C', root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes'], { timeoutMs: 8000 }),
+    runGit(['-C', root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'], { timeoutMs: 8000 }),
+    runGit(['-C', root, 'log', '-1', '--format=%H%x00%s%x00%an%x00%ad', '--date=iso-strict'], { timeoutMs: 8000 }),
   ]);
   const valueAt = index => results[index]?.status === 'fulfilled' ? String(results[index].value.stdout || '').trim() : '';
   const commitParts = valueAt(6).split('\\0');
@@ -182,8 +256,8 @@ async function readGitEnvironment(cwd, compareBranch = '') {
   const compare = normalizeGitBranch(compareBranch);
   if (compare && environment.git.branches.includes(compare) && compare !== environment.git.branch) {
     const compareResults = await Promise.allSettled([
-      runLocalCommand('git', ['-C', root, 'diff', '--numstat', `HEAD..${compare}`], { timeoutMs: 10000 }),
-      runLocalCommand('git', ['-C', root, 'log', '-1', '--format=%H%x00%s%x00%ad', '--date=iso-strict', compare], { timeoutMs: 8000 }),
+      runGit(['-C', root, 'diff', '--numstat', `HEAD..${compare}`], { timeoutMs: 10000 }),
+      runGit(['-C', root, 'log', '-1', '--format=%H%x00%s%x00%ad', '--date=iso-strict', compare], { timeoutMs: 8000 }),
     ]);
     const compareStat = compareResults[0]?.status === 'fulfilled' ? parseGitNumstat(compareResults[0].value.stdout) : null;
     const compareCommit = compareResults[1]?.status === 'fulfilled' ? String(compareResults[1].value.stdout || '').trim().split('\\0') : [];
@@ -270,7 +344,7 @@ async function listGitHubPullRequests(repository) {
 async function readGitHubProject(cwd) {
   let origin;
   try {
-    const result = await runLocalCommand('git', ['-C', cwd, 'remote', 'get-url', 'origin'], { timeoutMs: 8000 });
+    const result = await runGit(['-C', cwd, 'remote', 'get-url', 'origin'], { timeoutMs: 8000 });
     origin = String(result.stdout || '').trim();
   } catch {
     return null;
@@ -370,11 +444,11 @@ async function handleGitAction(req, res) {
         logGit('completed', '', { branch, gitDetail: gitDetail() });
         return json(res, 200, { ok: true, action, branch, environment: target.environment, message: '当前已经在这个分支上。' });
       }
-      const status = await runLocalCommand('git', ['-C', root, 'status', '--porcelain'], { timeoutMs: 8000 });
+      const status = await runGit(['-C', root, 'status', '--porcelain'], { timeoutMs: 8000 });
       if (String(status.stdout || '').trim()) {
         throw gitActionError('工作区有未提交改动，请先提交或暂存后再切换分支。', 'GIT_WORKTREE_DIRTY', 409);
       }
-      await runLocalCommand('git', ['-C', root, 'switch', '--quiet', '--', branch], { timeoutMs: 15000 });
+      await runGit(['-C', root, 'switch', '--quiet', '--', branch], { timeoutMs: 15000 });
       const environment = await readGitEnvironment(target.cwd);
       logGit('completed', '', { branch, gitDetail: gitDetail() });
       return json(res, 200, { ok: true, action, branch, environment, message: `已切换到 ${branch}。` });
@@ -384,10 +458,10 @@ async function handleGitAction(req, res) {
       const message = String(payload.message || '').replace(/\s+/g, ' ').trim();
       if (!message) throw gitActionError('提交说明不能为空。', 'EMPTY_COMMIT_MESSAGE', 400);
       if (message.length > 180) throw gitActionError('提交说明不能超过 180 个字符。', 'COMMIT_MESSAGE_TOO_LONG', 400);
-      const status = await runLocalCommand('git', ['-C', root, 'status', '--porcelain'], { timeoutMs: 8000 });
+      const status = await runGit(['-C', root, 'status', '--porcelain'], { timeoutMs: 8000 });
       if (!String(status.stdout || '').trim()) throw gitActionError('工作区没有可提交的改动。', 'GIT_WORKTREE_CLEAN', 409);
-      await runLocalCommand('git', ['-C', root, 'add', '--all'], { timeoutMs: 20000 });
-      const commit = await runLocalCommand('git', ['-C', root, 'commit', '-m', message], { timeoutMs: 30000 });
+      await runGit(['-C', root, 'add', '--all'], { timeoutMs: 20000 });
+      const commit = await runGit(['-C', root, 'commit', '-m', message], { timeoutMs: 30000 });
       const environment = await readGitEnvironment(target.cwd);
       const hash = String(commit.stdout || '').match(/\[[^\]]+ ([a-f0-9]{7,})\]/)?.[1] || '';
       logGit('completed', '', { commitHash: hash, gitDetail: gitDetail() });
@@ -404,11 +478,11 @@ async function handleGitAction(req, res) {
       throw gitActionError('当前仓库没有 origin 远程地址，无法推送。', 'GIT_REMOTE_REQUIRED', 409);
     }
     try {
-      await runLocalCommand('git', ['-C', root, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { timeoutMs: 8000 });
+      await runGit(['-C', root, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { timeoutMs: 8000 });
     } catch {
       throw gitActionError('当前分支还没有设置上游分支，暂时不能自动推送。', 'GIT_UPSTREAM_REQUIRED', 409);
     }
-    const push = await runLocalCommand('git', ['-C', root, 'push'], { timeoutMs: 60000 });
+    const push = await runGit(['-C', root, 'push'], { timeoutMs: 60000 });
     const environment = await readGitEnvironment(target.cwd);
     logGit('completed', '', { remote: target.environment.git.remote, gitDetail: gitDetail() });
     return json(res, 200, {
@@ -430,7 +504,7 @@ async function handleGitAction(req, res) {
 }
 
 module.exports = {
-  runLocalCommand,
+  runGit,
   parseGitStatusRows,
   parseGitNumstat,
   countGitStatusRows,

@@ -326,7 +326,7 @@ class CodexAppServer {
     child.on('exit', (code, signal) => this.handleExit(new Error(`Codex App Server 已退出（${signal || code || 0}）。`)));
 
     try {
-      await this.requestRaw('initialize', {
+      await this.callRaw('initialize', {
         clientInfo: {
           name: 'codex_remote_bridge',
           title: 'Codex Remote Bridge',
@@ -451,7 +451,7 @@ class CodexAppServer {
     this.send({ id, result });
   }
 
-  async requestRaw(method, params = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, skipEnsure = false) {
+  async callRaw(method, params = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, skipEnsure = false) {
     if (!skipEnsure) await this.ensureStarted();
     const id = String(this.nextId++);
     return new Promise((resolve, reject) => {
@@ -470,12 +470,12 @@ class CodexAppServer {
     });
   }
 
-  async request(method, params = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
-    return this.requestRaw(method, params, timeoutMs, false);
+  async call(method, params = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+    return this.callRaw(method, params, timeoutMs, false);
   }
 
   async listThreads(options = {}) {
-    const response = await this.request('thread/list', {
+    const response = await this.call('thread/list', {
       limit: Math.max(1, Math.min(160, Number(options.limit) || 80)),
       sortKey: 'updated_at',
       sortDirection: 'desc',
@@ -486,7 +486,7 @@ class CodexAppServer {
   }
 
   async readThread(threadId, includeTurns = true) {
-    const response = await this.request('thread/read', { threadId, includeTurns }, 60000);
+    const response = await this.call('thread/read', { threadId, includeTurns }, 60000);
     return response?.thread || null;
   }
 
@@ -494,7 +494,7 @@ class CodexAppServer {
     const params = {};
     if (options.cwd) params.cwd = options.cwd;
     if (options.model) params.model = options.model;
-    const response = await this.request('thread/start', params, 45000);
+    const response = await this.call('thread/start', params, 45000);
     const thread = response?.thread;
     if (!thread?.id) throw new Error('Codex 没有返回新任务 ID。');
     this.threadRuntime.set(thread.id, {
@@ -511,7 +511,7 @@ class CodexAppServer {
     const params = { threadId, excludeTurns: options.excludeTurns !== false };
     if (options.cwd) params.cwd = options.cwd;
     if (options.model) params.model = options.model;
-    const response = await this.request('thread/resume', params, 60000);
+    const response = await this.call('thread/resume', params, 60000);
     const status = response?.thread?.status;
     const current = this.threadRuntime.get(threadId) || { threadId, activeTurnId: '', status: 'idle', updatedAt: '' };
     if (status?.type === 'active') current.status = 'running';
@@ -529,7 +529,7 @@ class CodexAppServer {
     if (settings.model) params.model = settings.model;
     if (settings.effort) params.effort = settings.effort;
     if (settings.cwd) params.cwd = settings.cwd;
-    return this.request('thread/settings/update', params);
+    return this.call('thread/settings/update', params);
   }
 
   async sendTurn(options = {}) {
@@ -557,7 +557,7 @@ class CodexAppServer {
     let result;
     let steered = false;
     if (runtime.status === 'running' && activeTurnId) {
-      result = await this.request('turn/steer', {
+      result = await this.call('turn/steer', {
         threadId,
         expectedTurnId: activeTurnId,
         clientUserMessageId,
@@ -568,7 +568,7 @@ class CodexAppServer {
       const params = { threadId, clientUserMessageId, input };
       if (options.model) params.model = options.model;
       if (options.effort) params.effort = options.effort;
-      result = await this.request('turn/start', params, 45000);
+      result = await this.call('turn/start', params, 45000);
       const turnId = String(result?.turn?.id || '');
       this.threadRuntime.set(threadId, {
         threadId,
@@ -591,7 +591,7 @@ class CodexAppServer {
       targetTurnId = String(active?.id || '');
     }
     if (!targetTurnId) throw new Error('这个任务当前没有可停止的回复。');
-    const result = await this.request('turn/interrupt', { threadId, turnId: targetTurnId });
+    const result = await this.call('turn/interrupt', { threadId, turnId: targetTurnId });
     this.threadRuntime.set(threadId, {
       threadId,
       activeTurnId: '',
@@ -603,22 +603,22 @@ class CodexAppServer {
   }
 
   async setThreadName(threadId, name) {
-    return this.request('thread/name/set', { threadId, name });
+    return this.call('thread/name/set', { threadId, name });
   }
 
   async archiveThread(threadId) {
-    return this.request('thread/archive', { threadId });
+    return this.call('thread/archive', { threadId });
   }
 
   async setThreadPinned(threadId, pinned) {
-    return this.request('thread/metadata/update', {
+    return this.call('thread/metadata/update', {
       threadId,
       thread: { isPinned: Boolean(pinned) },
     });
   }
 
   async compactThread(threadId) {
-    return this.request('thread/compact/start', { threadId }, 45000);
+    return this.call('thread/compact/start', { threadId }, 45000);
   }
 
   async startReview(threadId, options = {}) {
@@ -626,7 +626,7 @@ class CodexAppServer {
     const target = options.target && typeof options.target === 'object'
       ? options.target
       : { type: 'uncommittedChanges' };
-    const result = await this.request('review/start', { threadId, delivery, target }, 45000);
+    const result = await this.call('review/start', { threadId, delivery, target }, 45000);
     const reviewThreadId = String(result?.reviewThreadId || threadId || '');
     const turn = result?.turn || {};
     if (reviewThreadId && turn?.id) {
@@ -643,12 +643,12 @@ class CodexAppServer {
   }
 
   async listModels() {
-    const response = await this.request('model/list', { limit: 100, includeHidden: false });
+    const response = await this.call('model/list', { limit: 100, includeHidden: false });
     return Array.isArray(response?.data) ? response.data : [];
   }
 
   async listPlugins() {
-    return this.request('plugin/list', {}, 60000);
+    return this.call('plugin/list', {}, 60000);
   }
 
   async listSkills(cwds = [], options = {}) {
@@ -656,7 +656,7 @@ class CodexAppServer {
       .map(value => String(value || '').trim())
       .filter(Boolean))];
     if (!normalizedCwds.length) return [];
-    const response = await this.request('skills/list', {
+    const response = await this.call('skills/list', {
       cwds: normalizedCwds,
       forceReload: options.forceReload === true,
     }, 60000);
@@ -664,7 +664,7 @@ class CodexAppServer {
   }
 
   async listApps(options = {}) {
-    const response = await this.request('app/list', {
+    const response = await this.call('app/list', {
       cursor: null,
       limit: Math.max(1, Math.min(100, Number(options.limit) || 50)),
       forceRefetch: options.forceRefetch === true,

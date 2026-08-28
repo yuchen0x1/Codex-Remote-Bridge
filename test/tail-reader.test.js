@@ -15,6 +15,11 @@ function tmpSessionFile(t) {
   return file;
 }
 
+function safeFixtureFile(dir, name) {
+  if (!/^[A-Za-z0-9_-]+\.jsonl$/.test(name)) throw new Error('unsafe fixture file name');
+  return path.join(dir, name);
+}
+
 function writeLines(file, lines) {
   fs.writeFileSync(file, lines.join('\n') + (lines.length ? '\n' : ''), 'utf8');
 }
@@ -151,7 +156,7 @@ test('TailReader: 缓存上限淘汰最旧文件', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tail-reader-evict-'));
   try {
     for (let i = 0; i < 70; i += 1) {
-      const file = path.join(dir, 's' + i + '.jsonl');
+      const file = safeFixtureFile(dir, `s${i}.jsonl`);
       writeLines(file, [line('v' + i)]);
       reader.read(file);
       files.push(file);

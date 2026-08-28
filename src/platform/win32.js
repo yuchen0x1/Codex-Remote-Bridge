@@ -641,7 +641,7 @@ while ($true) {
       'ping' {
       }
       'invokeLink' {
-        Invoke-CodexLink ([string]$request.url)
+        Invoke-CodexLink ([string]$request.deepLink)
       }
       'activate' {
         Activate-CodexWindow | Out-Null
@@ -663,7 +663,7 @@ while ($true) {
         Paste-TextAndEnter ([string]$request.text)
       }
       'pasteTextAndEnterToThread' {
-        Paste-TextAndEnterToThread ([string]$request.url) ([string]$request.text) ([int]$request.settleMs)
+        Paste-TextAndEnterToThread ([string]$request.deepLink) ([string]$request.text) ([int]$request.settleMs)
       }
       'pasteTextOnly' {
         Paste-TextOnly ([string]$request.text)
@@ -851,7 +851,7 @@ function createPowerShellHelper() {
     return child;
   }
 
-  function request(action, payload = {}, options = {}) {
+  function sendAction(action, payload = {}, options = {}) {
     const timeoutMs = Number(options.timeoutMs || process.env.CODEX_MAX_WIN32_HELPER_TIMEOUT_MS || process.env.CODEX_MINI_WIN32_HELPER_TIMEOUT_MS || 8000);
     return new Promise((resolve, reject) => {
       const proc = ensureStarted();
@@ -871,7 +871,7 @@ function createPowerShellHelper() {
     });
   }
 
-  return { request, stop };
+  return { sendAction, stop };
 }
 
 function psLiteral(value) {
@@ -909,15 +909,89 @@ async function runPowerShellJson(script, timeoutMs = 12000) {
   }
 }
 
-function httpJson(url, timeoutMs = 1800) {
+function normalizeHost(hostname) {
+  return String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+}
+
+function isLoopbackHost(hostname) {
+  const host = normalizeHost(hostname);
+  if (host === 'localhost' || host === '::1') return true;
+  return net.isIP(host) === 4 && host.startsWith('127.');
+}
+
+function validateCdpHost(host) {
+  const normalized = String(host || '').trim();
+  if (!isLoopbackHost(normalized)) {
+    throw makeError('CDP host must be a loopback address.', 'CDP_INVALID_HOST');
+  }
+  return normalized;
+}
+
+function validateCodexDeepLink(value) {
+  let parsed;
+  try {
+    parsed = new URL(String(value || ''));
+  } catch {
+    throw makeError('Codex deep link is invalid.', 'CODEX_DEEPLINK_INVALID');
+  }
+  if (parsed.protocol !== 'codex:' || parsed.hostname !== 'threads') {
+    throw makeError('Codex deep link must target a Codex thread route.', 'CODEX_DEEPLINK_INVALID');
+  }
+  if (!/^\/(new|[a-f0-9]{8}-[a-f0-9-]{27,})$/i.test(parsed.pathname)) {
+    throw makeError('Codex deep link path is not allowed.', 'CODEX_DEEPLINK_INVALID');
+  }
+  return parsed.toString();
+}
+
+function validateCdpPort(port) {
+  const value = Number(port);
+  if (!Number.isInteger(value) || value < 1 || value > 65535) {
+    throw makeError('CDP port must be between 1 and 65535.', 'CDP_INVALID_PORT');
+  }
+  return value;
+}
+
+function validateCdpUrl(value, scheme, expectedHost, expectedPort) {
+  let parsed;
+  try {
+    parsed = new URL(String(value));
+  } catch {
+    throw makeError('CDP returned an invalid WebSocket URL.', 'CDP_INVALID_WS_URL');
+  }
+  if (parsed.protocol !== `${scheme}:` || !isLoopbackHost(parsed.hostname)) {
+    throw makeError('CDP WebSocket URL must use a loopback host.', 'CDP_INVALID_WS_URL');
+  }
+  if (expectedHost && parsed.hostname.toLowerCase() !== String(expectedHost).toLowerCase()) {
+    throw makeError('CDP WebSocket URL host does not match the configured host.', 'CDP_INVALID_WS_URL');
+  }
+  const port = validateCdpPort(parsed.port || (scheme === 'wss' ? 443 : 80));
+  if (expectedPort && port !== expectedPort) {
+    throw makeError('CDP WebSocket URL port does not match the configured port.', 'CDP_INVALID_WS_URL');
+  }
+  return parsed;
+}
+
+function cdpJson(host, port, pathname, timeoutMs = 1800) {
+  const safeHost = validateCdpHost(host);
+  const safePort = validateCdpPort(port);
+  const safePath = String(pathname || '');
+  if (!/^\/json\/(list|version)$/.test(safePath)) {
+    throw makeError('CDP HTTP path is not allowed.', 'CDP_INVALID_URL');
+  }
   return new Promise((resolve, reject) => {
-    const request = http.get(url, { timeout: timeoutMs }, response => {
+    const cdpRequest = http.get({
+      protocol: 'http:',
+      hostname: normalizeHost(safeHost),
+      port: safePort,
+      path: safePath,
+      timeout: timeoutMs,
+    }, response => {
       let body = '';
       response.setEncoding('utf8');
       response.on('data', chunk => { body += chunk; });
       response.on('end', () => {
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          reject(makeError(`CDP HTTP ${response.statusCode}: ${url}`, 'CDP_HTTP_FAILED'));
+          reject(makeError(`CDP HTTP ${response.statusCode}: ${safePath}`, 'CDP_HTTP_FAILED'));
           return;
         }
         try {
@@ -927,10 +1001,10 @@ function httpJson(url, timeoutMs = 1800) {
         }
       });
     });
-    request.on('timeout', () => {
-      request.destroy(makeError(`CDP HTTP timed out: ${url}`, 'CDP_TIMEOUT'));
+    cdpRequest.on('timeout', () => {
+      cdpRequest.destroy(makeError(`CDP HTTP timed out: ${safePath}`, 'CDP_TIMEOUT'));
     });
-    request.on('error', reject);
+    cdpRequest.on('error', reject);
   });
 }
 
@@ -996,8 +1070,8 @@ function decodeWsFrames(buffer) {
 }
 
 class RawCdpSocket {
-  constructor(wsUrl, timeoutMs = 3000) {
-    this.wsUrl = new URL(wsUrl);
+  constructor(wsUrl, timeoutMs = 3000, expectedHost = null, expectedPort = null) {
+    this.wsUrl = validateCdpUrl(wsUrl, 'ws', expectedHost, expectedPort);
     this.timeoutMs = timeoutMs;
     this.socket = null;
     this.nextId = 1;
@@ -1008,7 +1082,7 @@ class RawCdpSocket {
 
   async connect() {
     if (this.connected) return this;
-    const port = Number(this.wsUrl.port || 80);
+    const port = validateCdpPort(this.wsUrl.port || 80);
     this.socket = net.createConnection({ host: this.wsUrl.hostname, port });
     this.socket.setNoDelay(true);
     await new Promise((resolve, reject) => {
@@ -1142,13 +1216,13 @@ function jsString(value) {
 }
 
 function createCodexCdpController(options = {}) {
-  const port = Number(process.env.CODEX_MAX_CDP_PORT || process.env.CODEX_MINI_CDP_PORT || options.port || 9222);
-  const host = process.env.CODEX_MAX_CDP_HOST || process.env.CODEX_MINI_CDP_HOST || '127.0.0.1';
+  const port = validateCdpPort(process.env.CODEX_MAX_CDP_PORT || process.env.CODEX_MINI_CDP_PORT || options.port || 9222);
+  const host = validateCdpHost(process.env.CODEX_MAX_CDP_HOST || process.env.CODEX_MINI_CDP_HOST || '127.0.0.1');
   const baseUrl = `http://${host}:${port}`;
   const timeoutMs = Number(process.env.CODEX_MAX_CDP_TIMEOUT_MS || process.env.CODEX_MINI_CDP_TIMEOUT_MS || 4500);
 
   async function getTarget() {
-    const targets = await httpJson(`${baseUrl}/json/list`, Math.min(timeoutMs, 2500));
+    const targets = await cdpJson(host, port, '/json/list', Math.min(timeoutMs, 2500));
     const rows = Array.isArray(targets) ? targets : [];
     const target = rows.find(item => item.type === 'page' && /^app:\/\/-\/index\.html/.test(String(item.url || ''))) ||
       rows.find(item => item.type === 'page' && String(item.title || '').toLowerCase().includes('codex')) ||
@@ -1161,7 +1235,8 @@ function createCodexCdpController(options = {}) {
 
   async function withPage(fn) {
     const target = await getTarget();
-    const socket = await new RawCdpSocket(target.webSocketDebuggerUrl, timeoutMs).connect();
+    const socketUrl = validateCdpUrl(target.webSocketDebuggerUrl, 'ws', host, port);
+    const socket = await new RawCdpSocket(socketUrl.toString(), timeoutMs, host, port).connect();
     try {
       await socket.send('Runtime.enable', {}, timeoutMs);
       return await fn(socket, target);
@@ -1220,7 +1295,7 @@ function createCodexCdpController(options = {}) {
 
   async function probe() {
     try {
-      const version = await httpJson(`${baseUrl}/json/version`, Math.min(timeoutMs, 1800));
+      const version = await cdpJson(host, port, '/json/version', Math.min(timeoutMs, 1800));
       const target = await getTarget();
       return {
         available: true,
@@ -1700,7 +1775,7 @@ module.exports = function createWin32Platform(env) {
   const helper = createPowerShellHelper();
   const cdp = createCodexCdpController();
   const warmupTimer = setTimeout(() => {
-    helper.request('ping', {}, { timeoutMs: 6000 }).catch(() => {});
+    helper.sendAction('ping', {}, { timeoutMs: 6000 }).catch(() => {});
   }, 50);
   if (warmupTimer.unref) warmupTimer.unref();
   let lastCodexThreadActivation = { threadId: '', at: 0 };
@@ -1728,7 +1803,7 @@ module.exports = function createWin32Platform(env) {
     }
 
     if (options.allowCached && hasFreshCodexThreadActivation(threadId)) {
-      await helper.request('activate', {}, { timeoutMs: 5000 });
+      await helper.sendAction('activate', {}, { timeoutMs: 5000 });
       await delay(CODEX_APP_FOCUS_SETTLE_MS);
       lastCodexThreadActivation = { threadId, at: Date.now() };
       return;
@@ -1736,15 +1811,15 @@ module.exports = function createWin32Platform(env) {
 
     const deepLink = codexThreadDeepLink(threadId);
     if (deepLink) {
-      await helper.request('invokeLink', {
-        url: deepLink,
+      await helper.sendAction('invokeLink', {
+        deepLink: validateCodexDeepLink(deepLink),
       }, { timeoutMs: 5000 });
       await delay(CODEX_DEEPLINK_SETTLE_MS);
     } else {
-      await helper.request('invokeLink', { url: 'codex://threads/new' }, { timeoutMs: 5000 });
+      await helper.sendAction('invokeLink', { deepLink: validateCodexDeepLink('codex://threads/new') }, { timeoutMs: 5000 });
       await delay(CODEX_DEEPLINK_SETTLE_MS);
     }
-    await helper.request('activate', {}, { timeoutMs: 5000 });
+    await helper.sendAction('activate', {}, { timeoutMs: 5000 });
     await delay(CODEX_APP_FOCUS_SETTLE_MS);
     if (isCodexThreadId(threadId)) lastCodexThreadActivation = { threadId, at: Date.now() };
   }
@@ -1756,10 +1831,10 @@ module.exports = function createWin32Platform(env) {
       return;
     } catch {}
 
-    const deepLink = codexNewThreadDeepLink(cwd);
-    await helper.request('invokeLink', { url: deepLink }, { timeoutMs: 5000 });
+    const deepLink = validateCodexDeepLink(codexNewThreadDeepLink(cwd));
+    await helper.sendAction('invokeLink', { deepLink }, { timeoutMs: 5000 });
     await delay(CODEX_DEEPLINK_SETTLE_MS + 220);
-    await helper.request('activate', {}, { timeoutMs: 5000 });
+    await helper.sendAction('activate', {}, { timeoutMs: 5000 });
     await delay(CODEX_APP_FOCUS_SETTLE_MS);
     lastCodexThreadActivation = { threadId: '', at: 0 };
   }
@@ -1800,20 +1875,20 @@ module.exports = function createWin32Platform(env) {
       allowCached: shouldReloadThread ? false : Boolean(options.assumeThreadSynced),
     });
     if (options.skipComposerClick) {
-      await helper.request('primeComposer', {}, { timeoutMs: 5000 });
+      await helper.sendAction('primeComposer', {}, { timeoutMs: 5000 });
       return;
     }
-    await helper.request('focusComposer', {}, { timeoutMs: 6000 });
+    await helper.sendAction('focusComposer', {}, { timeoutMs: 6000 });
   }
 
   async function copyTextToClipboard(text) {
-    await helper.request('setClipboardText', { text: String(text || '') }, { timeoutMs: 4000 });
+    await helper.sendAction('setClipboardText', { text: String(text || '') }, { timeoutMs: 4000 });
   }
 
   async function copyImageToClipboard(file) {
     const filePath = file && file.filePath;
     if (!filePath || !fs.existsSync(filePath)) throw new Error(`图片文件不存在：${filePath || ''}`);
-    await helper.request('copyImage', { filePath }, { timeoutMs: 6000 });
+    await helper.sendAction('copyImage', { filePath }, { timeoutMs: 6000 });
   }
 
   async function typeText(text) {
@@ -1825,7 +1900,7 @@ module.exports = function createWin32Platform(env) {
       await cdp.sendText(String(text || ''));
       return;
     } catch {}
-    await helper.request('pasteTextAndEnter', { text: String(text || '') }, { timeoutMs: 6000 });
+    await helper.sendAction('pasteTextAndEnter', { text: String(text || '') }, { timeoutMs: 6000 });
   }
 
   async function pasteTextAndEnterToThread(threadId, text) {
@@ -1840,8 +1915,8 @@ module.exports = function createWin32Platform(env) {
       await pasteTextAndEnter(text);
       return;
     }
-    await helper.request('pasteTextAndEnterToThread', {
-      url: deepLink,
+    await helper.sendAction('pasteTextAndEnterToThread', {
+      deepLink: validateCodexDeepLink(deepLink),
       text: String(text || ''),
       settleMs: CODEX_DEEPLINK_SETTLE_MS,
     }, { timeoutMs: Math.max(8000, CODEX_DEEPLINK_SETTLE_MS + 5000) });
@@ -1854,11 +1929,11 @@ module.exports = function createWin32Platform(env) {
       await cdp.insertText(String(text || ''));
       return;
     } catch {}
-    await helper.request('pasteTextOnly', { text: String(text || '') }, { timeoutMs: 6000 });
+    await helper.sendAction('pasteTextOnly', { text: String(text || '') }, { timeoutMs: 6000 });
   }
 
   async function runCodexCommandSelection(command, selection, options = {}) {
-    await helper.request('commandSelection', {
+    await helper.sendAction('commandSelection', {
       command: String(command || ''),
       selection: String(selection || ''),
       commandSettleMs: Number(options.commandSettleMs || 700),
@@ -1867,7 +1942,7 @@ module.exports = function createWin32Platform(env) {
   }
 
   async function pressPaste() {
-    await helper.request('pressPaste', {}, { timeoutMs: 5000 });
+    await helper.sendAction('pressPaste', {}, { timeoutMs: 5000 });
   }
 
   async function pressEnter() {
@@ -1875,7 +1950,7 @@ module.exports = function createWin32Platform(env) {
       await cdp.pressEnter();
       return;
     } catch {}
-    await helper.request('pressEnter', {}, { timeoutMs: 5000 });
+    await helper.sendAction('pressEnter', {}, { timeoutMs: 5000 });
   }
 
   async function pressCodexShortcut(key, modifiers = []) {
@@ -1887,7 +1962,7 @@ module.exports = function createWin32Platform(env) {
       else if (normalized === 'option' || normalized === 'alt') codes.push(0x12);
     }
     codes.push(win32KeyCode(key));
-    await helper.request('pressShortcut', { keys: codes }, { timeoutMs: 5000 });
+    await helper.sendAction('pressShortcut', { keys: codes }, { timeoutMs: 5000 });
   }
 
   async function pressCancelCodexResponse() {
@@ -1895,7 +1970,7 @@ module.exports = function createWin32Platform(env) {
       await cdp.stopResponse();
       return;
     } catch {}
-    await helper.request('pressCancel', {}, { timeoutMs: 7000 });
+    await helper.sendAction('pressCancel', {}, { timeoutMs: 7000 });
   }
 
   async function switchReasoningMode(targetKey) {
@@ -1915,7 +1990,7 @@ module.exports = function createWin32Platform(env) {
   }
 
   async function getToolbarState() {
-    return helper.request('getToolbarState', {}, { timeoutMs: 5000 });
+    return helper.sendAction('getToolbarState', {}, { timeoutMs: 5000 });
   }
 
   async function snapshotClipboard() {
@@ -1924,13 +1999,13 @@ module.exports = function createWin32Platform(env) {
     const metaFile = path.join(dir, 'meta.json');
     const textFile = path.join(dir, 'text.txt');
     const imageFile = path.join(dir, 'image.png');
-    await helper.request('snapshotClipboard', { metaFile, textFile, imageFile }, { timeoutMs: 5000 });
+    await helper.sendAction('snapshotClipboard', { metaFile, textFile, imageFile }, { timeoutMs: 5000 });
     return { dir, metaFile, textFile, imageFile };
   }
 
   async function restoreClipboard(snapshot) {
     if (!snapshot || !fs.existsSync(snapshot.metaFile)) return;
-    await helper.request('restoreClipboard', {
+    await helper.sendAction('restoreClipboard', {
       metaFile: snapshot.metaFile,
       textFile: snapshot.textFile,
       imageFile: snapshot.imageFile,
@@ -1985,8 +2060,9 @@ module.exports = function createWin32Platform(env) {
         '-ExecutionPolicy',
         'Bypass',
         '-Command',
-        script,
-      ], { stdio: 'ignore', windowsHide: true });
+        '-'
+      ], { stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+      keepAwakeProcess.stdin.end(script);
       keepAwakeStartedAt = new Date().toISOString();
       keepAwakeProcess.on('exit', () => {
         keepAwakeProcess = null;

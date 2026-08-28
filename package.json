@@ -8,7 +8,7 @@
   "dependencies": {},
   "devDependencies": {},
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "name": "codex-remote-bridge",
   "version": "4.0.0",

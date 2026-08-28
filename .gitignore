@@ -27,6 +27,9 @@ android/**/signing/
 # Reasonix 工具生成的本地缓存
 .reasonix/
 
+# Mimosa 工具生成的本地扫描状态
+.mimosa/
+
 # 编译产物（源码见 scripts/codex-window-point.swift，构建时生成）
 bin/codex-window-point
 macos/CodexMini/CodexMini/Resources/CodexMiniProject/bin/

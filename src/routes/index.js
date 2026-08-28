@@ -14,6 +14,16 @@ const path = require('path');
 const os = require('os');
 const { URL } = require('url');
 
+function resolveStaticFilePath(rootDir, pathname) {
+  const relativePath = String(pathname || '/').replace(/^\/+/, '') || 'index.html';
+  const segments = relativePath.split('/').filter(Boolean);
+  if (segments.some(segment => segment === '.' || segment === '..' || segment.includes('\0'))) return '';
+  const root = path.resolve(rootDir);
+  const filePath = path.resolve(root, ...segments);
+  const relative = path.relative(root, filePath);
+  return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? filePath : '';
+}
+
 // Helpers
 function json(res, status, body) {
   const payload = JSON.stringify(body);
@@ -264,16 +274,12 @@ class Router {
   // ---- 内置静态服务（未委托时使用）----
 
   _serveStatic(req, res, pathname) {
-    const safePath = path.normalize(path.join(this.publicDir, pathname === '/' ? 'index.html' : pathname));
-    const relative = path.relative(this.publicDir, safePath);
-    if (relative.startsWith('..') || path.isAbsolute(relative)) {
-      return json(res, 403, { ok: false, message: '禁止访问。' });
-    }
+    const safePath = resolveStaticFilePath(this.publicDir, pathname === '/' ? 'index.html' : pathname);
+    if (!safePath) return json(res, 403, { ok: false, message: '禁止访问。' });
     fs.readFile(safePath, (err, data) => {
       if (err) {
-        const distPath = path.normalize(path.join(this.distDir, pathname === '/' ? 'index.html' : pathname));
-        const distRelative = path.relative(this.distDir, distPath);
-        if (!distRelative.startsWith('..') && !path.isAbsolute(distRelative)) {
+        const distPath = resolveStaticFilePath(this.distDir, pathname === '/' ? 'index.html' : pathname);
+        if (distPath) {
           fs.readFile(distPath, (err2, data2) => {
             if (err2) return json(res, 404, { ok: false, message: '文件不存在。' });
             const ext = path.extname(distPath).toLowerCase();

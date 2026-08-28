@@ -2,7 +2,7 @@
 
 /**
  * HTTPS 证书模块 - 自动生成自签名证书，支持 HTTPS 加密传输
- * 纯 Node 实现：使用 crypto 生成 RSA 密钥并手工构造 X.509 DER，无需 OpenSSL
+ * 纯 Node 实现：使用 crypto 生成 ECDSA 密钥并手工构造 X.509 DER，无需 OpenSSL
  */
 
 const fs = require('fs');
@@ -14,7 +14,7 @@ const CERT_DIR = path.join(os.homedir(), '.codex-max', 'certs');
 const CERT_FILE = path.join(CERT_DIR, 'cert.pem');
 const KEY_FILE = path.join(CERT_DIR, 'key.pem');
 const CERT_VALIDITY_DAYS = 365;
-const CERT_KEY_SIZE = 2048;
+const CERT_EC_CURVE = 'secp384r1';
 
 // ---- ASN.1 DER 编码工具（零依赖） ----
 
@@ -63,8 +63,10 @@ function derName(entries) {
   return derTag(0x30, Buffer.concat(rdns));
 }
 
-function derAlgorithm(oidParts) {
-  return derTag(0x30, Buffer.concat([derTag(0x06, encodeOid(oidParts)), derTag(0x05, Buffer.alloc(0))]));
+function derAlgorithm(oidParts, includeNull = true) {
+  const parts = [derTag(0x06, encodeOid(oidParts))];
+  if (includeNull) parts.push(derTag(0x05, Buffer.alloc(0)));
+  return derTag(0x30, Buffer.concat(parts));
 }
 
 function derUtcTime(date) {
@@ -74,8 +76,7 @@ function derUtcTime(date) {
   return derTag(0x17, Buffer.from(s));
 }
 
-const OID_RSA_ENCRYPTION = [1, 2, 840, 113549, 1, 1, 1];
-const OID_SHA256_WITH_RSA = [1, 2, 840, 113549, 1, 1, 11];
+const OID_ECDSA_WITH_SHA384 = [1, 2, 840, 10045, 4, 3, 3];
 const OID_COMMON_NAME = [2, 5, 4, 3];
 const OID_ORGANIZATION = [2, 5, 4, 10];
 const OID_ORG_UNIT = [2, 5, 4, 11];
@@ -103,6 +104,11 @@ function buildSanGeneralNames(name) {
 
 function toPem(der) {
   return `-----BEGIN CERTIFICATE-----\n${der.toString('base64').replace(/(.{64})/g, '$1\n')}\n-----END CERTIFICATE-----\n`;
+}
+
+function safeCertSubjectName(value) {
+  const name = String(value || 'codex-max-local').trim();
+  return /^[A-Za-z0-9.-]{1,253}$/.test(name) ? name : 'codex-max-local';
 }
 
 class CertificateManager {
@@ -145,61 +151,32 @@ class CertificateManager {
    * 构造并签发一张证书（TBS 用指定私钥签名）
    */
   _signCert(tbs, signingKey) {
-    const signer = crypto.createSign('RSA-SHA256');
+    const signer = crypto.createSign('SHA384');
     signer.update(tbs);
     signer.end();
     const signature = signer.sign(signingKey);
     return derTag(0x30, Buffer.concat([
       tbs,
-      derAlgorithm(OID_SHA256_WITH_RSA),
+      derAlgorithm(OID_ECDSA_WITH_SHA384, false),
       derTag(0x03, Buffer.concat([Buffer.from([0x00]), signature])), // BIT STRING
     ]));
   }
 
   /**
-   * 生成证书链：CA 根证书 + 由 CA 签发的服务器证书（标准做法，可被导入为信任根）
+   * 生成单张自签名服务器证书。证书本身作为本地信任锚使用，避免维护额外 CA 链。
    */
   _createCertChain(name) {
     const now = new Date();
     const notAfter = new Date(now.getTime() + CERT_VALIDITY_DAYS * 24 * 3600 * 1000);
     const validity = derTag(0x30, Buffer.concat([derUtcTime(now), derUtcTime(notAfter)]));
-    const caName = derName([
-      { oid: OID_COMMON_NAME, value: 'CodexMax Local CA', type: 'utf8' },
+    const serverName = derName([
+      { oid: OID_COMMON_NAME, value: name, type: 'utf8' },
       { oid: OID_ORGANIZATION, value: 'CodexMax', type: 'utf8' },
       { oid: OID_ORG_UNIT, value: 'Local', type: 'utf8' },
     ]);
-    const serverName = derName([{ oid: OID_COMMON_NAME, value: name, type: 'utf8' }]);
 
-    // ---- CA 根证书 ----
-    const caPair = crypto.generateKeyPairSync('rsa', {
-      modulusLength: CERT_KEY_SIZE,
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
-      publicKeyEncoding: { type: 'spki', format: 'der' },
-    });
-    const caBasicExtn = derTag(0x30, Buffer.concat([
-      derTag(0x06, encodeOid(OID_BASIC_CONSTRAINTS)),
-      derTag(0x01, Buffer.from([0xFF])), // critical
-      derTag(0x04, derTag(0x30, derTag(0x01, Buffer.from([0xFF])))), // cA TRUE
-    ]));
-    const caKuExtn = derTag(0x30, Buffer.concat([
-      derTag(0x06, encodeOid(OID_KEY_USAGE)),
-      derTag(0x04, derTag(0x03, Buffer.concat([Buffer.from([0x00]), Buffer.from([0x06])]))), // keyCertSign(5) | cRLSign(6)
-    ]));
-    const caTbs = derTag(0x30, Buffer.concat([
-      derTag(0xA0, derInteger(Buffer.from([0x02]))), // v3
-      derInteger(crypto.randomBytes(16)),
-      derAlgorithm(OID_SHA256_WITH_RSA),
-      caName,
-      validity,
-      caName, // 自签名：issuer = subject
-      caPair.publicKey,
-      derTag(0xA3, derTag(0x30, Buffer.concat([caBasicExtn, caKuExtn]))),
-    ]));
-    const caCert = toPem(this._signCert(caTbs, caPair.privateKey));
-
-    // ---- 服务器证书（end-entity，由 CA 签发）----
-    const serverPair = crypto.generateKeyPairSync('rsa', {
-      modulusLength: CERT_KEY_SIZE,
+    const serverPair = crypto.generateKeyPairSync('ec', {
+      namedCurve: CERT_EC_CURVE,
       privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
       publicKeyEncoding: { type: 'spki', format: 'der' },
     });
@@ -207,31 +184,31 @@ class CertificateManager {
       derTag(0x06, encodeOid(OID_SUBJECT_ALT_NAME)),
       derTag(0x04, derTag(0x30, Buffer.concat(buildSanGeneralNames(name)))),
     ]));
-    const eeBasicExtn = derTag(0x30, Buffer.concat([
+    const basicExtn = derTag(0x30, Buffer.concat([
       derTag(0x06, encodeOid(OID_BASIC_CONSTRAINTS)),
-      derTag(0x04, derTag(0x30, Buffer.alloc(0))), // cA FALSE（end-entity）
+      derTag(0x04, derTag(0x30, Buffer.alloc(0))), // cA FALSE
     ]));
-    const eeKuExtn = derTag(0x30, Buffer.concat([
+    const keyUsageExtn = derTag(0x30, Buffer.concat([
       derTag(0x06, encodeOid(OID_KEY_USAGE)),
-      derTag(0x04, derTag(0x03, Buffer.concat([Buffer.from([0x00]), Buffer.from([0xA0])]))), // digitalSignature(0) | keyEncipherment(2)
+      derTag(0x04, derTag(0x03, Buffer.concat([Buffer.from([0x07]), Buffer.from([0x80])]))), // digitalSignature
     ]));
-    const eeEkuExtn = derTag(0x30, Buffer.concat([
+    const ekuExtn = derTag(0x30, Buffer.concat([
       derTag(0x06, encodeOid(OID_EXTENDED_KEY_USAGE)),
       derTag(0x04, derTag(0x30, derTag(0x06, encodeOid(OID_SERVER_AUTH)))), // serverAuth
     ]));
-    const eeTbs = derTag(0x30, Buffer.concat([
+    const tbs = derTag(0x30, Buffer.concat([
       derTag(0xA0, derInteger(Buffer.from([0x02]))), // v3
       derInteger(crypto.randomBytes(16)),
-      derAlgorithm(OID_SHA256_WITH_RSA),
-      caName, // issuer = CA
+      derAlgorithm(OID_ECDSA_WITH_SHA384, false),
+      serverName,
       validity,
       serverName,
       serverPair.publicKey,
-      derTag(0xA3, derTag(0x30, Buffer.concat([sanExtn, eeBasicExtn, eeKuExtn, eeEkuExtn]))),
+      derTag(0xA3, derTag(0x30, Buffer.concat([sanExtn, basicExtn, keyUsageExtn, ekuExtn]))),
     ]));
-    const serverCert = toPem(this._signCert(eeTbs, caPair.privateKey)); // 用 CA 私钥签发
+    const serverCert = toPem(this._signCert(tbs, serverPair.privateKey));
 
-    return { caCert, serverCert, serverKey: serverPair.privateKey };
+    return { caCert: '', serverCert, serverKey: serverPair.privateKey };
   }
 
   /**
@@ -259,13 +236,33 @@ class CertificateManager {
   }
 
   _generateWithOpenSsl(subject) {
-    const { execSync } = require('child_process');
-    execSync(
-      `openssl req -x509 -newkey rsa:${CERT_KEY_SIZE} -keyout "${this.keyFile}" ` +
-      `-out "${this.certFile}" -days ${CERT_VALIDITY_DAYS} -nodes ` +
-      `-subj "/CN=${subject}/O=CodexMax/OU=Local" -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"`,
-      { stdio: 'pipe', timeout: 10000 }
-    );
+    const { spawnSync } = require('child_process');
+    const safeSubject = safeCertSubjectName(subject);
+    const result = spawnSync('openssl', [
+      'req',
+      '-x509',
+      '-newkey',
+      `ec:${CERT_EC_CURVE}`,
+      '-pkeyopt',
+      `ec_paramgen_curve:${CERT_EC_CURVE}`,
+      '-pkeyopt',
+      'ec_param_enc:named_curve',
+      '-keyout',
+      this.keyFile,
+      '-out',
+      this.certFile,
+      '-days',
+      String(CERT_VALIDITY_DAYS),
+      '-nodes',
+      '-sha384',
+      '-subj',
+      `/CN=${safeSubject}/O=CodexMax/OU=Local`,
+      '-addext',
+      'subjectAltName=IP:127.0.0.1,DNS:localhost',
+    ], { stdio: 'pipe', timeout: 10000 });
+    if (result.status !== 0) {
+      throw new Error(String(result.stderr || result.error?.message || 'OpenSSL failed.').trim());
+    }
     try { fs.chmodSync(this.keyFile, 0o600); } catch {}
     return { ok: true, certFile: this.certFile, keyFile: this.keyFile };
   }
