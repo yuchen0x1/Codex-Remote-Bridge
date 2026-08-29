@@ -3,7 +3,7 @@
 ## Prerequisites
 
 ### Windows
-- **Node.js** 18+ (`node --version`)
+- **Node.js** 20+ (`node --version`)
 - **.NET 8 SDK** (`dotnet --list-sdks`) — only needed for Windows desktop app
 - **Inno Setup 6** (`ISCC.exe`) — only needed for Windows installer
 - **JDK 17+** — only needed for Android APK

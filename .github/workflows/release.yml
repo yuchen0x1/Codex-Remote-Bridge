@@ -34,7 +34,7 @@ jobs:
         run: npm run check
 
       - name: Run tests
-        run: node --test test/
+        run: npm test
 
   # ---- Android Release APK ----
   android:

@@ -339,7 +339,7 @@ internal sealed class ServiceManager
     private static string NormalizeHttpPath(string path)
     {
         var value = string.IsNullOrWhiteSpace(path) ? "/" : path.Trim();
-        return value.StartsWith('/', StringComparison.Ordinal) ? value : "/" + value;
+        return value.StartsWith("/", StringComparison.Ordinal) ? value : "/" + value;
     }
 
     private static Process? StartManagedServiceProcess(ProcessStartInfo start)
@@ -479,7 +479,10 @@ internal sealed class ServiceManager
     private static bool TryParseVersion(string? text, out Version version)
     {
         version = new Version();
-        return !string.IsNullOrWhiteSpace(text) && Version.TryParse(text.TrimStart('v'), out version);
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        if (!Version.TryParse(text.TrimStart('v'), out var parsed) || parsed is null) return false;
+        version = parsed;
+        return true;
     }
 
     private async Task<HealthSnapshot> GetHealthAsync(LauncherConfig config)
@@ -633,7 +636,7 @@ internal sealed class ServiceManager
             var candidate = Path.Combine(dir.Trim(), "node.exe");
             if (File.Exists(candidate)) return candidate;
         }
-        throw new InvalidOperationException("没有找到 Node.js。请安装 Node.js 18+，或在 App 资源中内置 node.exe。");
+        throw new InvalidOperationException("没有找到 Node.js。请安装 Node.js 20+，或在 App 资源中内置 node.exe。");
     }
 
     private string ResolveWindowsInstallerPath()

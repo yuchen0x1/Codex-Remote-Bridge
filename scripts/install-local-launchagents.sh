@@ -16,7 +16,7 @@ fi
 
 NODE="$(command -v node || true)"
 if [[ -z "$NODE" ]]; then
-  echo "Node.js is required. Install Node 18+ first." >&2
+  echo "Node.js is required. Install Node 20+ first." >&2
   exit 1
 fi
 
