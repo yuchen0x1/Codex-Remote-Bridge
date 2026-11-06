@@ -4794,6 +4794,7 @@
         <h3>手机配对</h3>
         <div class="pairing-qr" id="pairing-qr">正在生成二维码…</div>
         <p class="pairing-address" id="pairing-address"></p>
+        <p class="pairing-hint" id="pairing-hint" style="font-size:11px;color:var(--faint);margin:0 0 12px;"></p>
         <div class="pairing-actions">
           <button id="pairing-copy" type="button">复制连接地址</button>
           <button id="pairing-close" type="button">关闭</button>
@@ -4925,6 +4926,30 @@
       const cleanUrl = new URL(location.href);
       cleanUrl.searchParams.delete('token');
       history.replaceState({}, '', `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+    }
+    // 一次性配对码引导：?pair=<6位码> 兑换 HttpOnly 会话，全程不在 URL 暴露长期令牌
+    const queryPairCode = new URLSearchParams(location.search).get('pair') || '';
+    if (queryPairCode) {
+      const pairCleanUrl = new URL(location.href);
+      pairCleanUrl.searchParams.delete('pair');
+      history.replaceState({}, '', `${pairCleanUrl.pathname}${pairCleanUrl.search}${pairCleanUrl.hash}`);
+      (async () => {
+        try {
+          const response = await fetch(`${basePath}/codex/pair`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ code: queryPairCode }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (response.ok && data.ok) {
+            location.reload();
+          } else {
+            console.warn('[pair] 配对失败:', data.message || response.status);
+          }
+        } catch (error) {
+          console.warn('[pair] 配对请求失败:', error);
+        }
+      })();
     }
     const ROUTE_STORAGE_KEY = 'codexMini.apiRoutes.v1';
     const CONTEXT_DISPLAY_MODE_STORAGE_KEY = 'codexMini.contextDisplayMode.v1';
@@ -5385,30 +5410,52 @@
         return shareUrl.toString();
       })() : location.href;
     }
-    function openPairingQrModal() {
-      const modal = document.getElementById('pairing-modal');
-      const qrBox = document.getElementById('pairing-qr');
-      const addressBox = document.getElementById('pairing-address');
-      if (!modal) return;
-      const address = mobileConnectionAddress();
-      addressBox.textContent = address;
-      qrBox.textContent = '正在生成二维码…';
+    function renderPairingQr(qrBox, address) {
       if (window.QRCode) {
         qrBox.innerHTML = '';
         try {
           new QRCode(qrBox, { text: address, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+          return true;
         } catch (e) {
           qrBox.textContent = '二维码生成失败，请使用下方地址';
+          return false;
         }
-      } else {
-        const lib = document.createElement('script');
-        lib.src = 'https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js';
-        lib.onload = () => openPairingQrModal();
-        lib.onerror = () => { qrBox.textContent = '二维码库加载失败（离线环境），请复制下方地址'; };
-        document.head.appendChild(lib);
-        return;
       }
+      const lib = document.createElement('script');
+      lib.src = 'https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js';
+      lib.onload = () => openPairingQrModal();
+      lib.onerror = () => { qrBox.textContent = '二维码库加载失败（离线环境），请复制下方地址'; };
+      document.head.appendChild(lib);
+      return false;
+    }
+    async function pairingAddressCandidate() {
+      // 优先申请一次性配对码：新设备扫码后用 ?pair= 兑换 HttpOnly 会话，URL 不再携带长期令牌
+      try {
+        const response = await fetchApi(apiUrl('/codex/pairing-code'), { cache: 'no-store', apiTimeoutMs: 8000 });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok && data.ok && /^\d{6}$/.test(String(data.code || ''))) {
+          const pairUrl = new URL(location.href);
+          pairUrl.search = '';
+          pairUrl.hash = '';
+          pairUrl.searchParams.set('pair', data.code);
+          return { address: pairUrl.toString(), hint: `一次性配对码 ${data.code} · 90 秒内有效 · 用后即废` };
+        }
+      } catch {}
+      return { address: mobileConnectionAddress(), hint: '当前连接方式会在地址中携带访问令牌，建议在已连接设备上生成配对码' };
+    }
+    async function openPairingQrModal() {
+      const modal = document.getElementById('pairing-modal');
+      const qrBox = document.getElementById('pairing-qr');
+      const addressBox = document.getElementById('pairing-address');
+      const hintBox = document.getElementById('pairing-hint');
+      if (!modal) return;
       modal.hidden = false;
+      qrBox.textContent = '正在生成二维码…';
+      if (hintBox) hintBox.textContent = '';
+      const { address, hint } = await pairingAddressCandidate();
+      addressBox.textContent = address;
+      if (hintBox) hintBox.textContent = hint;
+      if (!renderPairingQr(qrBox, address)) return;
     }
     function closePairingQrModal() {
       const modal = document.getElementById('pairing-modal');

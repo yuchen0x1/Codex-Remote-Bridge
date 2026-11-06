@@ -152,6 +152,22 @@ test('Feature: System overview, control, git diff, and mdns broadcaster are regi
   assert.ok(html.includes('workspace-diff'), 'Workspace diff tab exists');
 });
 
+test('Security: one-time pairing code flow replaces token-in-URL for new devices', () => {
+  const src = require('fs').readFileSync('./server.js', 'utf8');
+  assert.ok(src.includes('/codex/pairing-code'), 'Pairing code endpoint registered');
+  assert.ok(src.includes('/codex/pair'), 'Pair redeem endpoint registered');
+  assert.ok(src.includes('PairingManager'), 'PairingManager integrated');
+
+  const pairing = require('fs').readFileSync('./src/security/pairing.js', 'utf8');
+  assert.ok(pairing.includes('attemptAllowed'), 'Per-IP brute force guard exists');
+  assert.ok(pairing.includes("replace(/^\\\\d{6}$/") || pairing.includes("test(normalized)"), '6-digit code validation exists');
+
+  const html = require('fs').readFileSync('./public/index.html', 'utf8');
+  assert.ok(html.includes(".get('pair')"), 'Front-end detects ?pair= param');
+  assert.ok(html.includes('/codex/pair'), 'Front-end redeems pairing code');
+  assert.ok(html.includes('pairing-code'), 'Front-end requests pairing code for QR');
+});
+
 test('Phase 3: /codex/status uses incremental tail parsing', () => {
   const src = require('fs').readFileSync('./server.js', 'utf8');
   assert.ok(src.includes("require('./src/store/tail-reader')"), 'TailReader required');
