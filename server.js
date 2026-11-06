@@ -24,6 +24,7 @@ const { CronParser } = require('./src/scheduler/cron');
 const { CodexSessionParser } = require('./src/codex/session-parser');
 const { CdpWebSocketHub } = require('./src/cdp/ws-hub');
 const { Router, getClientIp, corsHeaders } = require('./src/routes');
+const { MdnsBroadcaster } = require('./src/services/mdns');
 // json 和 readBody 使用 server.js 本地定义（包含 CORS 头和超时处理）
 
 const APP_NAME = process.env.CODEX_MAX_APP_NAME || process.env.CODEX_MINI_APP_NAME || 'Codex Remote Bridge';
@@ -43,7 +44,14 @@ function loadPersistedToken() {
 function persistToken(token) {
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true });
-    fs.writeFileSync(TOKEN_FILE, token, { encoding: 'utf8', mode: 0o600 });
+    const tempFile = `${TOKEN_FILE}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tempFile, token, { encoding: 'utf8', mode: 0o600 });
+    try {
+      fs.renameSync(tempFile, TOKEN_FILE);
+    } catch {
+      fs.writeFileSync(TOKEN_FILE, token, { encoding: 'utf8', mode: 0o600 });
+      try { fs.unlinkSync(tempFile); } catch {}
+    }
   } catch (error) {
     console.warn('[token] 保存访问令牌失败:', error.message || error);
   }
@@ -1634,6 +1642,14 @@ function gitCommandError(message = 'Git 参数无效。') {
   return new Error(message);
 }
 
+// git pathspec 白名单：仅允许仓库内相对路径，拒绝绝对路径、盘符与 .. 穿越
+function isSafeGitPathSpec(value) {
+  const spec = String(value || '');
+  if (!spec || spec.includes('\0')) return false;
+  if (path.isAbsolute(spec) || /^[a-zA-Z]:/.test(spec)) return false;
+  return !spec.split(/[\\/]+/).includes('..');
+}
+
 function normalizeGitCwd(value) {
   const cwd = validLocalDirectory(String(value || '').trim());
   if (!cwd) throw gitCommandError('Git 工作目录无效。');
@@ -1673,6 +1689,11 @@ function normalizeGitCommandArgs(args) {
       if (rest.length === 2 && rest[0] === '--numstat' && rest[1].startsWith('HEAD..')) {
         const branch = branchArg(rest[1].slice('HEAD..'.length));
         if (branch) return ['-C', cwd, command, '--numstat', `HEAD..${branch}`];
+      }
+      // 只读 diff 查看：整仓或指定相对路径文件（供手机端工作区变更面板使用）
+      if (exact('HEAD')) return ['-C', cwd, command, 'HEAD'];
+      if (rest.length === 3 && rest[0] === 'HEAD' && rest[1] === '--' && isSafeGitPathSpec(rest[2])) {
+        return ['-C', cwd, command, 'HEAD', '--', rest[2]];
       }
       break;
     case 'for-each-ref':
@@ -5229,6 +5250,146 @@ function normalizeLogRow(row = {}) {
   };
 }
 
+// ===== 系统指标与工作区 Git Diff =====
+
+function readCpuSnapshot() {
+  const cpus = os.cpus();
+  let idle = 0;
+  let total = 0;
+  for (const cpu of cpus) {
+    idle += cpu.times.idle;
+    total += cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.idle + cpu.times.irq;
+  }
+  return { idle, total };
+}
+
+let lastCpuSnapshot = readCpuSnapshot();
+let lastCpuPct = 0;
+setInterval(() => {
+  const current = readCpuSnapshot();
+  const idleDiff = current.idle - lastCpuSnapshot.idle;
+  const totalDiff = current.total - lastCpuSnapshot.total;
+  if (totalDiff > 0) {
+    lastCpuPct = Math.max(0, Math.min(100, Math.round((1 - idleDiff / totalDiff) * 100)));
+  }
+  lastCpuSnapshot = current;
+}, 3000).unref();
+
+async function handleSystemOverview(req, res) {
+  if (!isAuthorized(req)) return json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: '访问令牌不正确。' });
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+  const memPct = totalMem > 0 ? Math.round((usedMem / totalMem) * 100) : 0;
+  const cdp = platform.cdpStatus ? await platform.cdpStatus().catch(() => null) : null;
+  const keepAwake = keepAwakeStatus();
+
+  return json(res, 200, {
+    ok: true,
+    hostname: os.hostname(),
+    platform: platform.name,
+    cpu: {
+      cores: os.cpus().length,
+      usagePct: lastCpuPct,
+      model: os.cpus()[0]?.model || 'Unknown',
+    },
+    memory: {
+      total: totalMem,
+      used: usedMem,
+      free: freeMem,
+      usagePct: memPct,
+    },
+    uptime: Math.floor(os.uptime()),
+    serviceUptime: Math.floor(process.uptime()),
+    keepAwake: Boolean(keepAwake.enabled),
+    cdp: {
+      available: Boolean(cdp?.available),
+      port: cdp?.port || 9222,
+    },
+    appServer: codexAppServer.status(),
+  });
+}
+
+async function handleSystemControl(req, res) {
+  if (!isAuthorized(req)) return json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: '访问令牌不正确。' });
+  if (security.tokenScopeFromRequest(req) === 'read-only') {
+    return json(res, 403, { ok: false, code: 'TOKEN_READ_ONLY', message: '只读令牌不能执行系统控制操作。' });
+  }
+  let payload = {};
+  try {
+    payload = JSON.parse(await readBody(req) || '{}');
+  } catch (error) {
+    return json(res, 400, { ok: false, code: 'BAD_REQUEST', message: error.message || '请求格式不正确。' });
+  }
+
+  const action = String(payload.action || '').trim().toLowerCase();
+  if (action === 'lock-screen') {
+    if (process.platform === 'win32') {
+      try {
+        spawn('rundll32.exe', ['user32.dll,LockWorkStation'], { detached: true, stdio: 'ignore' });
+        return json(res, 200, { ok: true, message: '已向电脑发送锁屏指令。' });
+      } catch (err) {
+        return json(res, 500, { ok: false, code: 'LOCK_FAILED', message: err.message || '锁屏失败。' });
+      }
+    } else if (process.platform === 'darwin') {
+      try {
+        spawn('pmset', ['displaysleepnow'], { detached: true, stdio: 'ignore' });
+        return json(res, 200, { ok: true, message: '已向 Mac 发送熄屏/锁定指令。' });
+      } catch (err) {
+        return json(res, 500, { ok: false, code: 'LOCK_FAILED', message: err.message || '锁定失败。' });
+      }
+    }
+    return json(res, 400, { ok: false, code: 'UNSUPPORTED_PLATFORM', message: '当前平台不支持远程锁屏。' });
+  }
+
+  if (action === 'keep-awake') {
+    const enable = payload.enabled === true;
+    try {
+      const status = await (enable ? startKeepAwake() : stopKeepAwake());
+      return json(res, 200, { ok: true, ...status, message: status.enabled ? '已开启保持亮屏。' : '已关闭保持亮屏。' });
+    } catch (err) {
+      return json(res, 500, { ok: false, code: 'KEEP_AWAKE_FAILED', message: err.message || '保持亮屏设置失败。' });
+    }
+  }
+
+  return json(res, 400, { ok: false, code: 'BAD_ACTION', message: '未知的控制指令。' });
+}
+
+async function handleGitDiff(req, res) {
+  if (!isAuthorized(req)) return json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: '访问令牌不正确。' });
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const cwdParam = String(url.searchParams.get('cwd') || '').trim();
+  const fileParam = String(url.searchParams.get('file') || '').trim();
+
+  let target;
+  try {
+    target = await resolveGitActionTarget(cwdParam);
+  } catch (err) {
+    return json(res, err.status || 400, { ok: false, code: err.code || 'GIT_DIFF_FAILED', message: err.message });
+  }
+
+  const root = target.root;
+  try {
+    const args = ['-C', root, 'diff', 'HEAD'];
+    if (fileParam) {
+      if (!isSafeGitPathSpec(fileParam)) {
+        return json(res, 403, { ok: false, code: 'FORBIDDEN_PATH', message: '文件路径不合法。' });
+      }
+      args.push('--', fileParam);
+    }
+    const diffResult = await runGit(args, { timeoutMs: 15000 });
+    const diffText = String(diffResult.stdout || '');
+    return json(res, 200, {
+      ok: true,
+      cwd: target.cwd,
+      file: fileParam || '',
+      diff: diffText.slice(0, 500000), // 限制最大 500KB diff
+    });
+  } catch (err) {
+    return json(res, 500, { ok: false, code: 'GIT_DIFF_FAILED', message: err.message || '获取 Diff 失败。' });
+  }
+}
+
 async function handleStats(req, res) {
   if (!isAuthorized(req)) return json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: '访问令牌不正确。' });
   try {
@@ -5280,8 +5441,29 @@ async function handleWebhook(req, res) {
       return json(res, 400, { ok: false, code: 'BAD_REQUEST', message: error.message || '请求格式不正确。' });
     }
     const url = String(payload.url || '').trim();
-    if (url && !/^https?:\/\//i.test(url)) {
-      return json(res, 400, { ok: false, code: 'BAD_WEBHOOK_URL', message: 'Webhook 地址必须以 http(s):// 开头。' });
+    if (url) {
+      if (!/^https?:\/\//i.test(url)) {
+        return json(res, 400, { ok: false, code: 'BAD_WEBHOOK_URL', message: 'Webhook 地址必须以 http(s):// 开头。' });
+      }
+      try {
+        const parsedUrl = new URL(url);
+        const host = parsedUrl.hostname.toLowerCase();
+        if (process.env.CODEX_ALLOW_PRIVATE_WEBHOOK !== '1') {
+          if (
+            host === 'localhost' ||
+            host === '::1' ||
+            host === '[::1]' ||
+            host === '0.0.0.0' ||
+            /^127(?:\.\d+){1,3}$/.test(host) ||
+            /^169\.254(?:\.\d+){1,3}$/.test(host) ||
+            host.endsWith('.internal')
+          ) {
+            return json(res, 400, { ok: false, code: 'FORBIDDEN_WEBHOOK_HOST', message: '禁止使用环回或元数据私有网络地址作为 Webhook。' });
+          }
+        }
+      } catch {
+        return json(res, 400, { ok: false, code: 'BAD_WEBHOOK_URL', message: 'Webhook 地址格式不正确。' });
+      }
     }
     const state = store.readState();
     state.webhook = url;
@@ -5343,6 +5525,9 @@ const apiRouteTable = [
   { method: 'POST', prefix: '/codex/stop', handler: handleStopCodex },
   { method: 'GET', prefix: '/codex/stats', handler: handleStats },
   { method: '*', prefix: '/codex/webhook', handler: handleWebhook },
+  { method: 'GET', prefix: '/codex/system/overview', handler: handleSystemOverview },
+  { method: 'POST', prefix: '/codex/system/control', handler: handleSystemControl },
+  { method: 'GET', prefix: '/codex/git/diff', handler: handleGitDiff },
 ];
 
 const router = new Router({
@@ -5404,9 +5589,16 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
+const mdnsBroadcaster = new MdnsBroadcaster({
+  port: PORT,
+  name: `Codex-${os.hostname()}`,
+  txt: { app: 'codex-remote-bridge', ver: SERVICE_VERSION },
+});
+
 server.listen(PORT, HOST, () => {
   startScheduledTaskRunner();
   cdpWsHub.start();
+  mdnsBroadcaster.start();
   const urls = getLanUrls();
   const protocol = USE_HTTPS && certManager.hasValidCert() ? 'https' : 'http';
   logger.info('server_started', { port: PORT, host: HOST, protocol, version: SERVICE_VERSION, ws: true });
@@ -5418,6 +5610,7 @@ server.listen(PORT, HOST, () => {
 });
 
 process.on('exit', () => {
+  mdnsBroadcaster.stop();
   stopScheduledTaskRunner();
   cdpWsHub.stop();
   persistentQueue.close();
@@ -5426,6 +5619,7 @@ process.on('exit', () => {
   codexAppServer.close();
 });
 process.on('SIGINT', () => {
+  mdnsBroadcaster.stop();
   stopScheduledTaskRunner();
   cdpWsHub.stop();
   persistentQueue.close();
@@ -5435,6 +5629,7 @@ process.on('SIGINT', () => {
   process.exit(130);
 });
 process.on('SIGTERM', () => {
+  mdnsBroadcaster.stop();
   stopScheduledTaskRunner();
   cdpWsHub.stop();
   persistentQueue.close();

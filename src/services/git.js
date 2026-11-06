@@ -11,6 +11,14 @@ function gitCommandError(message = 'Git 参数无效。') {
   return new Error(message);
 }
 
+// git pathspec 白名单：仅允许仓库内相对路径，拒绝绝对路径、盘符与 .. 穿越
+function isSafeGitPathSpec(value) {
+  const spec = String(value || '');
+  if (!spec || spec.includes('\0')) return false;
+  if (path.isAbsolute(spec) || /^[a-zA-Z]:/.test(spec)) return false;
+  return !spec.split(/[\\/]+/).includes('..');
+}
+
 function normalizeGitCwd(value) {
   const cwd = validLocalDirectory(String(value || '').trim());
   if (!cwd) throw gitCommandError('Git 工作目录无效。');
@@ -50,6 +58,11 @@ function normalizeGitCommandArgs(args) {
       if (rest.length === 2 && rest[0] === '--numstat' && rest[1].startsWith('HEAD..')) {
         const branch = branchArg(rest[1].slice('HEAD..'.length));
         if (branch) return ['-C', cwd, command, '--numstat', `HEAD..${branch}`];
+      }
+      // 只读 diff 查看：整仓或指定相对路径文件（供手机端工作区变更面板使用）
+      if (exact('HEAD')) return ['-C', cwd, command, 'HEAD'];
+      if (rest.length === 3 && rest[0] === 'HEAD' && rest[1] === '--' && isSafeGitPathSpec(rest[2])) {
+        return ['-C', cwd, command, 'HEAD', '--', rest[2]];
       }
       break;
     case 'for-each-ref':
