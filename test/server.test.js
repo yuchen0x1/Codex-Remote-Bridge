@@ -137,6 +137,21 @@ test('Process exit handlers clean up resources', () => {
   assert.ok(src.includes('cleanupKeepAwake'), 'Keep awake cleanup');
 });
 
+test('Feature: System overview, control, git diff, and mdns broadcaster are registered', () => {
+  const src = require('fs').readFileSync('./server.js', 'utf8');
+  assert.ok(src.includes('/codex/system/overview'), 'System overview endpoint registered');
+  assert.ok(src.includes('/codex/system/control'), 'System control endpoint registered');
+  assert.ok(src.includes('/codex/git/diff'), 'Git diff endpoint registered');
+  assert.ok(src.includes('MdnsBroadcaster'), 'mDNS broadcaster integrated');
+
+  const html = require('fs').readFileSync('./public/index.html', 'utf8');
+  assert.ok(html.includes('quick-chips-bar'), 'Quick chips prompt bar exists');
+  assert.ok(html.includes('tool-call-card'), 'Tool call accordion component exists');
+  assert.ok(html.includes('code-block-wrapper'), 'Code block copy and diff wrapper exists');
+  assert.ok(html.includes('system-health'), 'System health workspace tab exists');
+  assert.ok(html.includes('workspace-diff'), 'Workspace diff tab exists');
+});
+
 test('Phase 3: /codex/status uses incremental tail parsing', () => {
   const src = require('fs').readFileSync('./server.js', 'utf8');
   assert.ok(src.includes("require('./src/store/tail-reader')"), 'TailReader required');

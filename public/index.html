@@ -4366,6 +4366,193 @@
       cursor: pointer;
       font-size: 13px;
     }
+
+    /* 快捷动作胶囊栏 (Action Deck) */
+    .quick-chips-bar {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 2px 2px 8px;
+      scrollbar-width: none;
+    }
+    .quick-chips-bar::-webkit-scrollbar { display: none; }
+    .quick-chip {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 16px;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 4px 11px;
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .quick-chip:active {
+      background: rgba(94, 180, 255, 0.2);
+      border-color: var(--accent-blue);
+      color: #fff;
+      transform: scale(0.96);
+    }
+
+    /* Tool Call 现代化折叠卡片 */
+    .tool-call-card {
+      margin: 6px 0;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      overflow: hidden;
+      font-size: 12.5px;
+    }
+    .tool-call-summary {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 10px;
+      cursor: pointer;
+      list-style: none;
+      color: var(--muted);
+      user-select: none;
+    }
+    .tool-call-summary::-webkit-details-marker { display: none; }
+    .tool-call-summary::before {
+      content: "›";
+      font-size: 14px;
+      font-weight: bold;
+      transition: transform 0.16s ease;
+      color: var(--accent-blue);
+    }
+    .tool-call-card[open] .tool-call-summary::before {
+      transform: rotate(90deg);
+    }
+    .tool-call-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: rgba(94, 180, 255, 0.15);
+      color: var(--accent-blue);
+      font-family: monospace;
+      font-size: 11px;
+    }
+    .tool-call-content {
+      padding: 8px 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(0, 0, 0, 0.25);
+      color: #ccc;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11.5px;
+      line-height: 1.45;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* 代码块与 Diff 增强 */
+    .code-block-wrapper {
+      margin: 0.65em 0;
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--panel-2);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .code-block-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5px 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 11.5px;
+      color: var(--faint);
+    }
+    .code-copy-btn {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 11.5px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .code-copy-btn:active {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .code-diff-add {
+      background: rgba(46, 160, 67, 0.18) !important;
+      color: #7ee787;
+    }
+    .code-diff-del {
+      background: rgba(248, 81, 73, 0.18) !important;
+      color: #ff7b72;
+    }
+
+    /* 电脑状态与 Git 变更卡片样式 */
+    .system-health-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+    .system-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .system-card-title {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .system-card-value {
+      font-size: 20px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .system-card-sub {
+      font-size: 11px;
+      color: var(--faint);
+      margin-top: 4px;
+    }
+    .system-actions-bar {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .system-action-btn {
+      flex: 1;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.06);
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .system-action-btn:active {
+      background: rgba(255, 255, 255, 0.14);
+      transform: scale(0.98);
+    }
+    .git-diff-viewer {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      background: #09090b;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
@@ -4468,6 +4655,14 @@
         <span data-i18n="newTask">新建任务</span>
       </button>
       <nav class="drawer-global-nav" aria-label="工作区">
+        <button class="drawer-nav-item" id="drawer-system-health" type="button" data-workspace="system-health">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          <span>电脑状态</span>
+        </button>
+        <button class="drawer-nav-item" id="drawer-workspace-diff" type="button" data-workspace="workspace-diff">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+          <span>工作区变更</span>
+        </button>
         <button class="drawer-nav-item" id="drawer-pull-requests" type="button" data-workspace="pull-requests">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.25"/><circle cx="18" cy="18" r="2.25"/><circle cx="18" cy="6" r="2.25"/><path d="M8.25 6h3.2A3.55 3.55 0 0 1 15 9.55v4.9A3.55 3.55 0 0 0 18.55 18"/></svg>
           <span data-i18n="pullRequests">拉取请求</span>
@@ -4574,6 +4769,13 @@
         </form>
       </div>
       <div class="slash-command-menu" id="slash-command-menu" role="listbox" aria-label="斜杠菜单"></div>
+      <div class="quick-chips-bar" id="quick-chips-bar" aria-label="快捷指令">
+        <button class="quick-chip" type="button" data-chip="解释这段代码">💡 解释代码</button>
+        <button class="quick-chip" type="button" data-chip="运行测试并检查是否有报错">🧪 运行测试</button>
+        <button class="quick-chip" type="button" data-chip="分析这个报错并给出修复方案">🛠️ 修复报错</button>
+        <button class="quick-chip" type="button" data-chip="继续下一步操作">⚡ 继续执行</button>
+        <button class="quick-chip" type="button" data-chip="审查当前改动并给出简洁总结">📝 审查总结</button>
+      </div>
       <form class="composer" id="composer">
         <button class="icon-btn" id="attach" type="button" title="添加照片或附件" aria-label="添加照片或附件"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
         <button class="icon-btn" id="voice-input" type="button" title="语音输入" aria-label="语音输入"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3.4 3.4 0 0 0 3.4-3.4V6.4A3.4 3.4 0 0 0 12 3a3.4 3.4 0 0 0-3.4 3.4v5.2A3.4 3.4 0 0 0 12 15Z"/><path d="M5.6 10.6a6.4 6.4 0 0 0 12.8 0M12 17.2v3.4M8.8 20.6h6.4"/></svg></button>
@@ -4753,6 +4955,8 @@
     let knownThreads = [];
     const WORKSPACE_TITLES = {
       chat: '任务',
+      'system-health': '电脑状态',
+      'workspace-diff': '工作区变更',
       'pull-requests': '拉取请求',
       scheduled: '已安排',
       plugins: '插件',
@@ -5407,17 +5611,32 @@
       if (lastIndex < text.length) parts.push({ type: 'markdown', value: text.slice(lastIndex) });
       return parts;
     }
+    function formatCodeSnippet(lines, lang = '') {
+      const isDiff = lang === 'diff' || lines.some(l => l.startsWith('+++ ') || l.startsWith('--- ') || l.startsWith('@@ '));
+      const renderedLines = lines.map(line => {
+        const escaped = escapeHtml(line);
+        if (isDiff) {
+          if (line.startsWith('+') && !line.startsWith('+++')) return `<div class="code-diff-add">${escaped}</div>`;
+          if (line.startsWith('-') && !line.startsWith('---')) return `<div class="code-diff-del">${escaped}</div>`;
+        }
+        return `<div>${escaped || '&nbsp;'}</div>`;
+      }).join('');
+
+      const rawCode = lines.join('\n');
+      return `<div class="code-block-wrapper"><div class="code-block-header"><span>${escapeHtml(lang || (isDiff ? 'diff' : 'code'))}</span><button class="code-copy-btn" type="button" onclick="navigator.clipboard.writeText(decodeURIComponent('${encodeURIComponent(rawCode)}'));setNotice('代码已复制','ok');">复制</button></div><pre><code>${renderedLines}</code></pre></div>`;
+    }
+
     function markdownToHtmlWithoutMemory(markdown) {
       const lines = String(markdown || '').replace(/\r\n/g, '\n').split('\n');
-      let html = '', paragraph = [], listType = null, inCode = false, codeLines = [];
+      let html = '', paragraph = [], listType = null, inCode = false, codeLines = [], codeLang = '';
       const flushParagraph = () => { if (paragraph.length) { html += `<p>${renderInlineMarkdown(paragraph.join(' '))}</p>`; paragraph = []; } };
       const closeList = () => { if (listType) { html += `</${listType}>`; listType = null; } };
       for (let index = 0; index < lines.length; index += 1) {
         const line = lines[index];
         const trimmed = line.trim();
         if (trimmed.startsWith('```')) {
-          if (inCode) { html += `<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`; codeLines = []; inCode = false; }
-          else { flushParagraph(); closeList(); inCode = true; }
+          if (inCode) { html += formatCodeSnippet(codeLines, codeLang); codeLines = []; inCode = false; codeLang = ''; }
+          else { flushParagraph(); closeList(); inCode = true; codeLang = trimmed.slice(3).trim(); }
           continue;
         }
         if (inCode) { codeLines.push(line); continue; }
@@ -5453,7 +5672,7 @@
         }
         closeList(); paragraph.push(trimmed);
       }
-      if (inCode) html += `<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`;
+      if (inCode) html += formatCodeSnippet(codeLines, codeLang);
       flushParagraph(); closeList();
       return html;
     }
@@ -7619,13 +7838,16 @@
       if (tools.length) {
         const details = document.createElement('details');
         const summary = document.createElement('summary');
-        const list = document.createElement('ul');
-        details.className = 'process-tools';
-        details.open = true;
-        summary.textContent = processGroups(tools).map(group => processGroupLabel(group)).join(' · ');
-        for (const tool of tools.slice(-4)) {
-          const item = document.createElement('li');
-          item.textContent = tool.text || '使用工具';
+        const list = document.createElement('div');
+        details.className = 'tool-call-card';
+        details.open = false;
+        summary.className = 'tool-call-summary';
+        summary.innerHTML = `<span class="tool-call-badge">TOOL</span> <span>${escapeHtml(processGroups(tools).map(group => processGroupLabel(group)).join(' · '))}</span>`;
+        list.className = 'tool-call-content';
+        for (const tool of tools) {
+          const item = document.createElement('div');
+          item.style.marginBottom = '4px';
+          item.textContent = tool.text || '执行工具调用';
           list.appendChild(item);
         }
         details.append(summary, list);
@@ -9034,10 +9256,111 @@ function addDetails(message, steps = [], liveUpdate = false) {
       }
     }
 
+    function triggerHaptic(duration = 25) {
+      try {
+        if (typeof navigator.vibrate === 'function') {
+          navigator.vibrate(duration);
+        }
+      } catch {}
+    }
+
+    function renderSystemHealthWorkspace() {
+      workspaceContent.appendChild(workspaceHeading('电脑状态'));
+      const data = workspaceData['system-health'];
+      if (workspaceLoading.has('system-health') && !data) {
+        workspaceContent.appendChild(workspaceState('正在读取电脑系统指标…'));
+        return;
+      }
+      const error = renderWorkspaceError(data, 'system-health');
+      if (error) workspaceContent.appendChild(error);
+      if (!data) return;
+
+      const grid = workspaceElement('div', 'system-health-grid');
+      const cpuCard = workspaceElement('div', 'system-card');
+      cpuCard.innerHTML = `<div class="system-card-title">CPU 占用率</div><div class="system-card-value">${data.cpu?.usagePct || 0}%</div><div class="system-card-sub">${escapeHtml(data.cpu?.cores || '')} 核 · ${escapeHtml(data.cpu?.model || '')}</div>`;
+      const memCard = workspaceElement('div', 'system-card');
+      const usedGb = (data.memory?.used / 1024 / 1024 / 1024).toFixed(1);
+      const totalGb = (data.memory?.total / 1024 / 1024 / 1024).toFixed(1);
+      memCard.innerHTML = `<div class="system-card-title">内存使用率</div><div class="system-card-value">${data.memory?.usagePct || 0}%</div><div class="system-card-sub">${usedGb} GB / ${totalGb} GB</div>`;
+      grid.append(cpuCard, memCard);
+      workspaceContent.appendChild(grid);
+
+      const statusSection = workspaceElement('section', 'workspace-section');
+      statusSection.appendChild(workspaceElement('h2', 'workspace-section-title', '服务与连接'));
+      const statusList = workspaceElement('div', 'workspace-list');
+      statusList.appendChild(workspaceListRow({ title: '电脑主机名', detail: data.hostname || 'Local PC', meta: data.platform || '' }));
+      statusList.appendChild(workspaceListRow({ title: 'Codex CDP 控制通道', detail: data.cdp?.available ? `已连接 (端口 ${data.cdp?.port})` : '未连接或已挂起', meta: data.cdp?.available ? '在线' : '离线' }));
+      statusList.appendChild(workspaceListRow({ title: '系统运行时间', detail: `已开机 ${Math.floor((data.uptime || 0) / 3600)} 小时 ${Math.floor(((data.uptime || 0) % 3600) / 60)} 分钟` }));
+      statusSection.appendChild(statusList);
+      workspaceContent.appendChild(statusSection);
+
+      const controlSection = workspaceElement('section', 'workspace-section');
+      controlSection.appendChild(workspaceElement('h2', 'workspace-section-title', '快捷控制'));
+      const actionsBar = workspaceElement('div', 'system-actions-bar');
+      const lockBtn = workspaceElement('button', 'system-action-btn', '🔒 立即锁屏');
+      lockBtn.type = 'button';
+      lockBtn.addEventListener('click', async () => {
+        triggerHaptic(40);
+        if (!confirm('确定要让电脑立即锁屏吗？')) return;
+        try {
+          const res = await fetchApi(apiUrl('/codex/system/control'), {
+            method: 'POST',
+            body: JSON.stringify({ action: 'lock-screen' }),
+          });
+          const result = await res.json().catch(() => ({}));
+          setNotice(result.message || '指令已下发', result.ok ? 'ok' : 'error');
+        } catch (err) {
+          setNotice('锁屏指令发送失败: ' + err.message, 'error');
+        }
+      });
+
+      const keepAwakeActionBtn = workspaceElement('button', 'system-action-btn', data.keepAwake ? '☀️ 关闭保持亮屏' : '☕ 保持亮屏防休眠');
+      keepAwakeActionBtn.type = 'button';
+      keepAwakeActionBtn.addEventListener('click', async () => {
+        triggerHaptic(30);
+        await toggleKeepAwake();
+        loadWorkspaceData('system-health', { force: true });
+      });
+
+      actionsBar.append(lockBtn, keepAwakeActionBtn);
+      controlSection.appendChild(actionsBar);
+      workspaceContent.appendChild(controlSection);
+    }
+
+    function renderWorkspaceDiffWorkspace() {
+      workspaceContent.appendChild(workspaceHeading('工作区变更'));
+      const data = workspaceData['workspace-diff'];
+      if (workspaceLoading.has('workspace-diff') && !data) {
+        workspaceContent.appendChild(workspaceState('正在读取 Git 变更…'));
+        return;
+      }
+      const error = renderWorkspaceError(data, 'workspace-diff');
+      if (error) workspaceContent.appendChild(error);
+
+      const diffText = data?.diff || '';
+      if (!diffText.trim()) {
+        workspaceContent.appendChild(workspaceState('当前工作区干净，无未提交的 Git 代码变更。'));
+        return;
+      }
+
+      const diffViewer = workspaceElement('div', 'git-diff-viewer');
+      const diffLines = diffText.split('\n');
+      diffViewer.innerHTML = diffLines.map(line => {
+        const escaped = escapeHtml(line);
+        if (line.startsWith('+') && !line.startsWith('+++')) return `<div class="code-diff-add">${escaped}</div>`;
+        if (line.startsWith('-') && !line.startsWith('---')) return `<div class="code-diff-del">${escaped}</div>`;
+        if (line.startsWith('@@')) return `<div style="color:var(--accent-blue);font-weight:bold;">${escaped}</div>`;
+        return `<div>${escaped || '&nbsp;'}</div>`;
+      }).join('');
+      workspaceContent.appendChild(diffViewer);
+    }
+
     function renderWorkspace() {
       if (activeWorkspace === 'chat') return;
       workspaceContent.innerHTML = '';
-      if (activeWorkspace === 'pull-requests') renderPullRequestsWorkspace();
+      if (activeWorkspace === 'system-health') renderSystemHealthWorkspace();
+      else if (activeWorkspace === 'workspace-diff') renderWorkspaceDiffWorkspace();
+      else if (activeWorkspace === 'pull-requests') renderPullRequestsWorkspace();
       else if (activeWorkspace === 'scheduled') renderScheduledWorkspace();
       else if (activeWorkspace === 'plugins') renderPluginsWorkspace();
       else if (activeWorkspace === 'settings') renderSettingsWorkspace();
@@ -9076,6 +9399,8 @@ function addDetails(message, steps = [], liveUpdate = false) {
       if (kind === 'chat' || workspaceLoading.has(kind)) return;
       if (kind === 'settings') return loadSettingsWorkspaceData(options);
       const endpoint = {
+        'system-health': '/codex/system/overview',
+        'workspace-diff': '/codex/git/diff',
         'pull-requests': '/codex/pull-requests',
         scheduled: '/codex/schedules',
         plugins: '/codex/plugins',
@@ -11609,6 +11934,19 @@ function stopPolling() {
     window.addEventListener('beforeunload', () => { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); });
     window.addEventListener('pageshow', scheduleForegroundStateRefresh);
     window.addEventListener('focus', scheduleForegroundStateRefresh);
+
+    const quickChips = document.querySelectorAll('.quick-chip');
+    quickChips.forEach(chip => {
+      chip.addEventListener('click', event => {
+        event.preventDefault();
+        triggerHaptic(20);
+        const text = chip.dataset.chip || chip.textContent;
+        textarea.value = text;
+        autosize();
+        textarea.focus();
+        setNotice('快捷指令已填入', 'ok');
+      });
+    });
 
     lockViewportZoom();
     applyUiTheme();
