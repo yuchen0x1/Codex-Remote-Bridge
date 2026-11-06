@@ -106,6 +106,20 @@ function normalizeWebhook(value) {
   try {
     const url = new URL(raw);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+    const hostname = url.hostname.toLowerCase();
+    if (process.env.CODEX_ALLOW_PRIVATE_WEBHOOK !== '1') {
+      if (
+        hostname === 'localhost' ||
+        hostname === '::1' ||
+        hostname === '[::1]' ||
+        hostname === '0.0.0.0' ||
+        /^127(?:\.\d+){1,3}$/.test(hostname) ||
+        /^169\.254(?:\.\d+){1,3}$/.test(hostname) ||
+        hostname.endsWith('.internal')
+      ) {
+        return '';
+      }
+    }
     return url.toString().slice(0, 2000);
   } catch {
     return '';
@@ -145,7 +159,14 @@ class Store {
   persistToken(token) {
     try {
       fs.mkdirSync(this.stateDir, { recursive: true });
-      fs.writeFileSync(this.tokenFile, token, { encoding: 'utf8', mode: 0o600 });
+      const tempFile = `${this.tokenFile}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tempFile, token, { encoding: 'utf8', mode: 0o600 });
+      try {
+        fs.renameSync(tempFile, this.tokenFile);
+      } catch {
+        fs.writeFileSync(this.tokenFile, token, { encoding: 'utf8', mode: 0o600 });
+        try { fs.unlinkSync(tempFile); } catch {}
+      }
     } catch (error) {
       console.warn('[store] 保存访问令牌失败:', error.message || error);
     }
@@ -201,7 +222,16 @@ class Store {
       scheduledTasks: normalizeScheduledTasks(state.scheduledTasks),
       webhook: normalizeWebhook(state.webhook),
     };
-    fs.writeFileSync(this.stateFile, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8');
+    const content = `${JSON.stringify(normalized, null, 2)}\n`;
+    const tempFile = `${this.stateFile}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      fs.writeFileSync(tempFile, content, 'utf8');
+      fs.renameSync(tempFile, this.stateFile);
+    } catch {
+      // 在部分 Windows 环境文件被短时独占时降级为直接写入
+      fs.writeFileSync(this.stateFile, content, 'utf8');
+      try { fs.unlinkSync(tempFile); } catch {}
+    }
     this._cache = normalized;
     return normalized;
   }

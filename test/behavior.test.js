@@ -521,6 +521,50 @@ test('Store: 持久化往返 - 重启后 webhook 与 scheduledTasks 仍在', () 
   }
 });
 
+test('Store: webhook SSRF 防护 - 环回/元数据/内网域名地址被拒绝', () => {
+  const { store, dir } = makeTempStore();
+  try {
+    const forbidden = [
+      'http://127.0.0.1:9000/hook',
+      'http://localhost:9000/hook',
+      'http://[::1]:9000/hook',
+      'http://0.0.0.0/hook',
+      'http://169.254.169.254/latest/meta-data',
+      'http://metadata.internal/hook',
+    ];
+    for (const url of forbidden) {
+      const state = store.readState();
+      state.webhook = url;
+      store.writeState(state);
+      assert.equal(store.readState().webhook, '', `环回/元数据地址应被清空: ${url}`);
+    }
+    // 局域网地址默认仍允许（测试用例沿用 192.168 段）
+    const lanState = store.readState();
+    lanState.webhook = 'http://192.168.1.5:9000/notify';
+    store.writeState(lanState);
+    assert.equal(store.readState().webhook, 'http://192.168.1.5:9000/notify');
+  } finally {
+    store.invalidateCache();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Store: 原子写入 - writeState 产生完整 JSON 且不留临时文件', () => {
+  const { store, dir } = makeTempStore();
+  try {
+    const state = store.readState();
+    state.webhook = 'https://example.com/hook';
+    store.writeState(state);
+    const raw = fs.readFileSync(path.join(dir, 'state.json'), 'utf8');
+    assert.equal(JSON.parse(raw).webhook, 'https://example.com/hook');
+    const leftovers = fs.readdirSync(dir).filter(name => name.endsWith('.tmp'));
+    assert.equal(leftovers.length, 0, '临时文件应被清理');
+  } finally {
+    store.invalidateCache();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ---- CronParser 行为 ----
 
 test('CronParser: 解析 5 字段表达式', () => {
