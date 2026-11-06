@@ -2,7 +2,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test test/server.test.js test/codex-app-server.test.js test/behavior.test.js test/tail-reader.test.js test/history.test.js test/download.test.js test/scope.test.js test/screenshot.test.js test/schedule-ui.test.js test/cdp-version.test.js",
-    "check": "node --check server.js && node --check src/store/index.js && node --check src/store/tail-reader.js && node --check src/security/index.js && node --check src/security/sessions.js && node --check src/security/certs.js && node --check src/logger/index.js && node --check src/scheduler/index.js && node --check src/codex/session-parser.js && node --check src/routes/index.js && node --check src/store/queue.js && node --check src/scheduler/cron.js",
+    "check": "node --check server.js && node --check src/store/index.js && node --check src/store/tail-reader.js && node --check src/security/index.js && node --check src/security/pairing.js && node --check src/security/sessions.js && node --check src/security/certs.js && node --check src/logger/index.js && node --check src/scheduler/index.js && node --check src/codex/session-parser.js && node --check src/routes/index.js && node --check src/store/queue.js && node --check src/scheduler/cron.js",
     "start:https": "CODEX_MAX_HTTPS=1 node server.js"
   },
   "dependencies": {},

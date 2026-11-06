@@ -17,6 +17,7 @@ const { Store } = require('./src/store');
 const { PersistentQueue } = require('./src/store/queue');
 const { Security } = require('./src/security');
 const { SessionManager } = require('./src/security/sessions');
+const { PairingManager } = require('./src/security/pairing');
 const { CertificateManager } = require('./src/security/certs');
 const { Logger, defaultLogger } = require('./src/logger');
 const { Scheduler, normalizeScheduledTask, normalizeScheduledTasks, createScheduledTaskRecord, nextScheduledRunAt, SCHEDULED_TASK_LIMIT, RETRY_STRATEGIES } = require('./src/scheduler');
@@ -109,6 +110,7 @@ const codexAppServer = new CodexAppServer({ cwd: __dirname });
 const store = new Store({ stateDir: STATE_DIR, stateFile: STATE_FILE, tokenFile: TOKEN_FILE });
 const logger = defaultLogger;
 const sessionManager = new SessionManager({ logger, cookieSecure: USE_HTTPS });
+const pairingManager = new PairingManager({ logger });
 const security = new Security({ initialToken: TOKEN, appName: APP_NAME, store, sessionManager });
 const parser = new CodexSessionParser({ store });
 const persistentQueue = new PersistentQueue({ logger });
@@ -4901,6 +4903,49 @@ async function handleClientConfig(req, res) {
   }, extraHeaders);
 }
 
+async function handlePairingCode(req, res) {
+  if (!isAuthorized(req)) return json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: '访问令牌不正确。' });
+  const scope = security.tokenScopeFromRequest(req);
+  const created = pairingManager.createPairingCode(scope);
+  logger.info('pairing_code_created', { scope, expiresIn: Math.round((Date.parse(created.expiresAt) - Date.now()) / 1000) });
+  return json(res, 200, {
+    ok: true,
+    code: created.code,
+    expiresAt: created.expiresAt,
+    scope: created.scope,
+    message: '配对码 90 秒内有效，仅可使用一次；新设备配对后不会再在 URL 中携带长期令牌。',
+  });
+}
+
+async function handlePair(req, res) {
+  const ip = getClientIp(req);
+  if (!pairingManager.attemptAllowed(ip)) {
+    return json(res, 429, { ok: false, code: 'RATE_LIMITED', message: '配对尝试过于频繁，请稍后再试。' });
+  }
+  let payload = {};
+  try {
+    payload = JSON.parse(await readBody(req) || '{}');
+  } catch (error) {
+    return json(res, 400, { ok: false, code: 'BAD_REQUEST', message: error.message || '请求格式不正确。' });
+  }
+  const code = String(payload.code || '').trim();
+  if (!/^\d{6}$/.test(code)) {
+    return json(res, 400, { ok: false, code: 'BAD_PAIRING_CODE', message: '配对码为 6 位数字。' });
+  }
+  const scope = pairingManager.redeemPairingCode(code);
+  if (!scope) {
+    logger.warn('pairing_code_rejected', { ip });
+    return json(res, 401, { ok: false, code: 'PAIRING_CODE_INVALID', message: '配对码无效或已过期，请在电脑端重新获取。' });
+  }
+  const created = sessionManager.createSession(req.headers['user-agent'] || '', { scope });
+  logger.info('pairing_code_redeemed', { ip, scope });
+  return json(res, 200, {
+    ok: true,
+    scope,
+    message: '配对成功，已建立安全会话。',
+  }, { 'set-cookie': [sessionManager.sessionCookie(created.token)] });
+}
+
 async function handleHealth(req, res) {
   // 健康检查不需要鉴权（用于监控），但返回信息有限
   const authorized = isAuthorized(req);
@@ -5528,6 +5573,8 @@ const apiRouteTable = [
   { method: 'GET', prefix: '/codex/system/overview', handler: handleSystemOverview },
   { method: 'POST', prefix: '/codex/system/control', handler: handleSystemControl },
   { method: 'GET', prefix: '/codex/git/diff', handler: handleGitDiff },
+  { method: 'GET', prefix: '/codex/pairing-code', handler: handlePairingCode },
+  { method: 'POST', prefix: '/codex/pair', handler: handlePair },
 ];
 
 const router = new Router({
@@ -5611,6 +5658,7 @@ server.listen(PORT, HOST, () => {
 
 process.on('exit', () => {
   mdnsBroadcaster.stop();
+  pairingManager.destroy();
   stopScheduledTaskRunner();
   cdpWsHub.stop();
   persistentQueue.close();
@@ -5620,6 +5668,7 @@ process.on('exit', () => {
 });
 process.on('SIGINT', () => {
   mdnsBroadcaster.stop();
+  pairingManager.destroy();
   stopScheduledTaskRunner();
   cdpWsHub.stop();
   persistentQueue.close();
@@ -5630,6 +5679,7 @@ process.on('SIGINT', () => {
 });
 process.on('SIGTERM', () => {
   mdnsBroadcaster.stop();
+  pairingManager.destroy();
   stopScheduledTaskRunner();
   cdpWsHub.stop();
   persistentQueue.close();

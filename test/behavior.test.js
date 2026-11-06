@@ -17,6 +17,7 @@ const { Router } = require('../src/routes');
 const { PersistentQueue } = require('../src/store/queue');
 const { Security } = require('../src/security');
 const { SessionManager } = require('../src/security/sessions');
+const { PairingManager } = require('../src/security/pairing');
 const { CertificateManager } = require('../src/security/certs');
 const { Store } = require('../src/store');
 const { CronParser, isValidTimeZone } = require('../src/scheduler/cron');
@@ -562,6 +563,72 @@ test('Store: 原子写入 - writeState 产生完整 JSON 且不留临时文件',
   } finally {
     store.invalidateCache();
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- PairingManager 行为（动态配对码消除 URL Token）----
+
+test('Pairing: 创建并兑换一次性配对码，二次兑换失败', () => {
+  const pairing = new PairingManager();
+  try {
+    const { code, scope } = pairing.createPairingCode('read-write');
+    assert.match(code, /^\d{6}$/);
+    assert.equal(scope, 'read-write');
+    assert.equal(pairing.redeemPairingCode(code), 'read-write', '首次兑换成功');
+    assert.equal(pairing.redeemPairingCode(code), null, '配对码一次性，二次兑换失败');
+  } finally {
+    pairing.destroy();
+  }
+});
+
+test('Pairing: 错误码/非 6 位码被拒绝，scope 正确继承', () => {
+  const pairing = new PairingManager();
+  try {
+    const { code } = pairing.createPairingCode('read-only');
+    assert.equal(pairing.redeemPairingCode('000000'), null, '错误码被拒绝');
+    assert.equal(pairing.redeemPairingCode('12345'), null, '5 位码被拒绝');
+    assert.equal(pairing.redeemPairingCode('abcdef'), null, '非数字被拒绝');
+    assert.equal(pairing.redeemPairingCode(code), 'read-only', '只读配对码继承只读 scope');
+  } finally {
+    pairing.destroy();
+  }
+});
+
+test('Pairing: 过期配对码被拒绝', async () => {
+  const pairing = new PairingManager({ ttlMs: 30 });
+  try {
+    const { code } = pairing.createPairingCode('read-write');
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.equal(pairing.redeemPairingCode(code), null, '过期后兑换失败');
+  } finally {
+    pairing.destroy();
+  }
+});
+
+test('Pairing: 独立 IP 限流拦截爆破尝试', () => {
+  const pairing = new PairingManager({ maxAttemptsPerMinute: 3 });
+  try {
+    assert.equal(pairing.attemptAllowed('10.0.0.1'), true);
+    assert.equal(pairing.attemptAllowed('10.0.0.1'), true);
+    assert.equal(pairing.attemptAllowed('10.0.0.1'), true);
+    assert.equal(pairing.attemptAllowed('10.0.0.1'), false, '超过每分钟上限');
+    assert.equal(pairing.attemptAllowed('10.0.0.2'), true, '其他 IP 不受影响');
+    assert.equal(pairing.attemptAllowed(''), false, '无法确定来源的请求直接拒绝');
+  } finally {
+    pairing.destroy();
+  }
+});
+
+test('Pairing: 待兑换码数量上限淘汰最旧', () => {
+  const pairing = new PairingManager({ maxPendingCodes: 2 });
+  try {
+    const first = pairing.createPairingCode('read-write');
+    pairing.createPairingCode('read-write');
+    pairing.createPairingCode('read-write');
+    assert.equal(pairing.pendingCount(), 2);
+    assert.equal(pairing.redeemPairingCode(first.code), null, '最早的配对码已被淘汰');
+  } finally {
+    pairing.destroy();
   }
 });
 
