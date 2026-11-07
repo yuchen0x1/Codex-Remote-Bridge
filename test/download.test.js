@@ -73,6 +73,7 @@ test('P2-2: /codex/download 白名单、穿越防护、大小上限与鉴权', a
       HOME: tmpRoot,
       PORT: String(port),
       HOST: '127.0.0.1',
+      CODEX_MAX_HTTP_ONLY: '1',
       MOBILE_TYPER_TOKEN: TOKEN,
       CODEX_MAX_STATE_DIR: path.join(tmpRoot, '.codex-max'),
       CODEX_MAX_APP_SERVER: '0',

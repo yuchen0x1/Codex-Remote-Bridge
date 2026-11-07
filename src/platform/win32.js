@@ -655,6 +655,13 @@ while ($true) {
       'setClipboardText' {
         [System.Windows.Forms.Clipboard]::SetText([string]$request.text, [System.Windows.Forms.TextDataFormat]::UnicodeText)
       }
+      'getClipboardText' {
+        $text = ''
+        try {
+          if ([System.Windows.Forms.Clipboard]::ContainsText()) { $text = [System.Windows.Forms.Clipboard]::GetText() }
+        } catch {}
+        $result.text = [string]$text
+      }
       'copyImage' {
         $img = [System.Drawing.Image]::FromFile([string]$request.filePath)
         try { [System.Windows.Forms.Clipboard]::SetImage($img) } finally { $img.Dispose() }
@@ -1885,6 +1892,11 @@ module.exports = function createWin32Platform(env) {
     await helper.sendAction('setClipboardText', { text: String(text || '') }, { timeoutMs: 4000 });
   }
 
+  async function readClipboardText() {
+    const { result = {} } = await helper.sendAction('getClipboardText', {}, { timeoutMs: 4000 });
+    return String(result.text || '');
+  }
+
   async function copyImageToClipboard(file) {
     const filePath = file && file.filePath;
     if (!filePath || !fs.existsSync(filePath)) throw new Error(`图片文件不存在：${filePath || ''}`);
@@ -2109,6 +2121,7 @@ module.exports = function createWin32Platform(env) {
     activateNewCodexThread,
     activateNewProjectlessCodexThread,
     copyTextToClipboard,
+    readClipboardText,
     typeText,
     pasteTextAndEnter,
     pasteTextAndEnterToThread,

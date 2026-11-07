@@ -59,16 +59,39 @@ git clone https://gitee.com/yuchen0x1/Codex-Remote-Bridge.git
 node server.js
 ```
 
-终端会打印局域网入口，用手机浏览器打开即可。如需自定义 token，先设置环境变量再启动：
+默认以 **HTTPS（自签名证书）** 启动，保护局域网内的访问令牌与聊天消息；手机首次访问需接受证书警告。终端会打印局域网入口，用手机浏览器打开即可。
+
+如需自定义 token，先设置环境变量再启动：
 
 ```powershell
 $env:MOBILE_TYPER_TOKEN = "your-token"
 node server.js
 ```
 
+如确需回退到明文 HTTP（仅限可信局域网），可显式关闭 HTTPS：
+
+```powershell
+$env:CODEX_MAX_HTTP_ONLY = "1"
+node server.js
+```
+
 ### 第 3 步：手机连接
 
 电脑端 WPF 面板提供二维码入口，扫码即连；也可以在手机端手动粘贴带 token 的局域网地址直连。
+
+在「电脑状态」面板里还可使用**剪贴板同步**：从手机读取电脑剪贴板文本，或把手机上的文字写入电脑剪贴板（便于复制粘贴）。
+
+### Webhook 验签
+
+在手机端「设置 → 配置」中配置 Webhook。首次保存地址或轮换密钥时，签名密钥只在当前页面显示一次，请立即保存。
+
+每个 Webhook 请求都带有以下请求头：
+
+- `X-Codex-Webhook-Timestamp`：Unix 秒级时间戳
+- `X-Codex-Webhook-Event`：事件名，例如 `send.completed` 或 `send.failed`
+- `X-Codex-Webhook-Signature`：`sha256=` 加十六进制 HMAC 值
+
+签名原文为 `timestamp + "." + 原始请求体`，算法为 `HMAC-SHA256`。接收方应限制时间戳有效期并使用常量时间比较，防止重放和时序攻击。
 
 ### 进阶：打包构建
 

@@ -229,6 +229,7 @@ test('Phase 3: /codex/status parses a real session file with since (functional r
     HOST: '127.0.0.1',
     MOBILE_TYPER_TOKEN: 'regression-token',
     CODEX_MAX_STATE_DIR: path.join(tmpRoot, '.codex-max'),
+    CODEX_MAX_HTTP_ONLY: '1',
   };
   const child = spawn(process.execPath, ['server.js'], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   let stderr = '';
@@ -306,6 +307,7 @@ test('Malformed percent path and Host do not crash the server', async () => {
     HOST: '127.0.0.1',
     MOBILE_TYPER_TOKEN: 'robust-token',
     CODEX_MAX_STATE_DIR: path.join(tmpRoot, '.codex-max'),
+    CODEX_MAX_HTTP_ONLY: '1',
   };
   const child = spawn(process.execPath, ['server.js'], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   let stderr = '';

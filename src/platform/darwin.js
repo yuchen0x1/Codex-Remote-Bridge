@@ -121,6 +121,15 @@ module.exports = function createDarwinPlatform(env) {
     }
   }
 
+  async function readClipboardText() {
+    try {
+      const { stdout } = await runProcess('/usr/bin/osascript', ['-e', 'the clipboard as «class utf8»']);
+      return String(stdout || '').replace(/\r?\n$/, '');
+    } catch {
+      return '';
+    }
+  }
+
   async function activateCodexThread(threadId = '', options = {}) {
     if (options.allowCached && hasFreshCodexThreadActivation(threadId)) {
       await runProcess('open', ['-b', 'com.openai.codex']);
@@ -234,6 +243,7 @@ module.exports = function createDarwinPlatform(env) {
     activateNewCodexThread,
     activateNewProjectlessCodexThread,
     copyTextToClipboard,
+    readClipboardText,
     typeText,
     copyImageToClipboard,
     pressPaste,

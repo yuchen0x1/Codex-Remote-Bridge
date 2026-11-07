@@ -126,6 +126,11 @@ function normalizeWebhook(value) {
   }
 }
 
+function normalizeWebhookSecret(value) {
+  const raw = String(value || '').trim();
+  return /^[A-Za-z0-9_-]{32,128}$/.test(raw) ? raw : '';
+}
+
 function emptyState() {
   return {
     pinnedThreadIds: [],
@@ -134,6 +139,7 @@ function emptyState() {
     guiFailureReports: {},
     scheduledTasks: [],
     webhook: '',
+    webhookSecret: '',
   };
 }
 
@@ -204,6 +210,7 @@ class Store {
         guiFailureReports: normalizeGuiFailureReports(parsed.guiFailureReports),
         scheduledTasks: normalizeScheduledTasks(parsed.scheduledTasks),
         webhook: normalizeWebhook(parsed.webhook),
+        webhookSecret: normalizeWebhookSecret(parsed.webhookSecret),
       };
       return this._cache;
     } catch {
@@ -221,15 +228,18 @@ class Store {
       guiFailureReports: normalizeGuiFailureReports(state.guiFailureReports),
       scheduledTasks: normalizeScheduledTasks(state.scheduledTasks),
       webhook: normalizeWebhook(state.webhook),
+      webhookSecret: normalizeWebhookSecret(state.webhookSecret),
     };
     const content = `${JSON.stringify(normalized, null, 2)}\n`;
     const tempFile = `${this.stateFile}.${process.pid}.${Date.now()}.tmp`;
     try {
-      fs.writeFileSync(tempFile, content, 'utf8');
+      fs.writeFileSync(tempFile, content, { encoding: 'utf8', mode: 0o600 });
       fs.renameSync(tempFile, this.stateFile);
+      try { fs.chmodSync(this.stateFile, 0o600); } catch {}
     } catch {
       // 在部分 Windows 环境文件被短时独占时降级为直接写入
-      fs.writeFileSync(this.stateFile, content, 'utf8');
+      fs.writeFileSync(this.stateFile, content, { encoding: 'utf8', mode: 0o600 });
+      try { fs.chmodSync(this.stateFile, 0o600); } catch {}
       try { fs.unlinkSync(tempFile); } catch {}
     }
     this._cache = normalized;

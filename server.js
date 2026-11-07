@@ -31,7 +31,11 @@ const { MdnsBroadcaster } = require('./src/services/mdns');
 const APP_NAME = process.env.CODEX_MAX_APP_NAME || process.env.CODEX_MINI_APP_NAME || 'Codex Remote Bridge';
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '0.0.0.0';
-const USE_HTTPS = process.env.CODEX_MAX_HTTPS === '1' || process.env.CODEX_MINI_HTTPS === '1';
+const FORCE_HTTPS = process.env.CODEX_MAX_HTTPS === '1' || process.env.CODEX_MINI_HTTPS === '1';
+const FORCE_HTTP = process.env.CODEX_MAX_HTTP_ONLY === '1' || process.env.CODEX_MINI_HTTP_ONLY === '1';
+// HTTPS 默认开启（自签名证书）以保护局域网 token 与消息；仅当显式 CODEX_MAX_HTTP_ONLY=1 时才回退明文 HTTP
+const USE_HTTPS = FORCE_HTTPS || !FORCE_HTTP;
+let LAN_PROTOCOL = 'http';
 
 function loadPersistedToken() {
   try {
@@ -4851,9 +4855,10 @@ function updateInfo() {
 function getLanApiBases() {
   const nets = os.networkInterfaces();
   const bases = new Set();
+  const scheme = LAN_PROTOCOL === 'https' ? 'https' : 'http';
   for (const entries of Object.values(nets)) {
     for (const net of entries || []) {
-      if (net.family === 'IPv4' && !net.internal) bases.add(`http://${net.address}:${PORT}`);
+      if (net.family === 'IPv4' && !net.internal) bases.add(`${scheme}://${net.address}:${PORT}`);
     }
   }
   return [...bases];
@@ -5053,11 +5058,12 @@ async function handleKeepAwake(req, res) {
 
 function getLanUrls() {
   const nets = os.networkInterfaces();
-  const urls = new Set([`http://localhost:${PORT}/?token=${TOKEN}`]);
+  const scheme = LAN_PROTOCOL === 'https' ? 'https' : 'http';
+  const urls = new Set([`${scheme}://localhost:${PORT}/?token=${TOKEN}`]);
   for (const entries of Object.values(nets)) {
     for (const net of entries || []) {
       if (net.family === 'IPv4' && !net.internal) {
-        urls.add(`http://${net.address}:${PORT}/?token=${TOKEN}`);
+        urls.add(`${scheme}://${net.address}:${PORT}/?token=${TOKEN}`);
       }
     }
   }
@@ -5130,6 +5136,102 @@ async function handleFileDownload(req, res) {
     'X-Content-Type-Options': 'nosniff',
   });
   fs.createReadStream(resolved).on('error', () => res.destroy()).pipe(res);
+}
+
+async function handleFileList(req, res) {
+  if (!isAuthorized(req)) return json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: '访问令牌不正确。' });
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const cwdValue = String(url.searchParams.get('cwd') || '').trim();
+  const pathParam = String(url.searchParams.get('path') || '').trim();
+  const showHidden = String(url.searchParams.get('showHidden') || '') === '1';
+  let workspace = { threads: [] };
+  try { workspace = await listWorkspaceThreads(160); } catch {}
+  const projects = existingProjectCwds(workspace.threads);
+  if (!cwdValue) {
+    return json(res, 200, {
+      ok: true,
+      cwd: '',
+      path: '',
+      project: '',
+      parent: '',
+      showHidden,
+      projects,
+      items: [],
+    });
+  }
+  if (path.isAbsolute(pathParam)) return json(res, 403, { ok: false, code: 'FILE_LIST_FORBIDDEN', message: '仅允许浏览工作区内的相对路径目录。' });
+  const segments = pathParam.split(/[\\/]+/).filter(Boolean);
+  if (segments.includes('..')) return json(res, 403, { ok: false, code: 'FILE_LIST_FORBIDDEN', message: '目录路径不能包含上级目录。' });
+  if (!projects.includes(cwdValue)) return json(res, 403, { ok: false, code: 'FILE_LIST_FORBIDDEN', message: '目标目录不在可浏览白名单内。' });
+  const resolved = path.resolve(cwdValue, pathParam);
+  const withinRoot = path.relative(cwdValue, resolved);
+  if (withinRoot.startsWith('..') || path.isAbsolute(withinRoot)) return json(res, 403, { ok: false, code: 'FILE_LIST_FORBIDDEN', message: '目录路径超出工作区范围。' });
+  let stat;
+  try { stat = fs.lstatSync(resolved); } catch { return json(res, 404, { ok: false, code: 'FILE_LIST_NOT_FOUND', message: '目录不存在。' }); }
+  if (stat.isSymbolicLink()) {
+    try { const targetStat = fs.statSync(resolved); stat = targetStat; } catch {}
+  }
+  if (!stat.isDirectory()) return json(res, 400, { ok: false, code: 'FILE_LIST_NOT_DIR', message: '目标不是目录。' });
+  let entries;
+  try {
+    entries = fs.readdirSync(resolved, { withFileTypes: true });
+  } catch {
+    return json(res, 500, { ok: false, code: 'FILE_LIST_FAILED', message: '读取目录失败。' });
+  }
+  const items = [];
+  for (const entry of entries) {
+    const name = entry.name;
+    if (!showHidden && name.startsWith('.')) continue;
+    let isDir = entry.isDirectory();
+    let isFile = entry.isFile();
+    let isSymlink = entry.isSymbolicLink();
+    let size = 0;
+    let mtimeMs = 0;
+    if (isSymlink) {
+      try {
+        const targetStat = fs.statSync(path.join(resolved, name));
+        if (targetStat.isDirectory()) { isDir = true; isFile = false; }
+        else { isFile = true; isDir = false; }
+        size = isFile ? targetStat.size : 0;
+        mtimeMs = targetStat.mtimeMs;
+      } catch {}
+    } else if (isFile) {
+      try {
+        const fileStat = fs.statSync(path.join(resolved, name));
+        size = fileStat.size;
+        mtimeMs = fileStat.mtimeMs;
+      } catch {}
+    } else if (isDir) {
+      try {
+        const dirStat = fs.statSync(path.join(resolved, name));
+        mtimeMs = dirStat.mtimeMs;
+      } catch {}
+    }
+    items.push({
+      name,
+      isDir,
+      isFile,
+      isSymlink,
+      size,
+      mtimeMs,
+      downloadable: isFile && size <= MAX_DOWNLOAD_BYTES,
+    });
+  }
+  items.sort((a, b) => {
+    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+    return String(a.name).localeCompare(String(b.name), 'zh');
+  });
+  const parentPath = withinRoot === '.' ? '' : path.posix.normalize(path.dirname(withinRoot.split(path.sep).join('/')));
+  return json(res, 200, {
+    ok: true,
+    cwd: cwdValue,
+    path: pathParam,
+    project: cwdValue,
+    parent: parentPath === '.' ? '' : parentPath,
+    showHidden,
+    projects,
+    items,
+  });
 }
 
 async function handleDownload(req, res) {
@@ -5400,6 +5502,41 @@ async function handleSystemControl(req, res) {
   return json(res, 400, { ok: false, code: 'BAD_ACTION', message: '未知的控制指令。' });
 }
 
+// 读取电脑剪贴板文本（只读）
+async function handleClipboardRead(req, res) {
+  if (!isAuthorized(req)) return json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: '访问令牌不正确。' });
+  try {
+    const text = typeof platform.readClipboardText === 'function' ? await platform.readClipboardText() : '';
+    return json(res, 200, { ok: true, text, hasText: Boolean(text) });
+  } catch (error) {
+    return json(res, 500, { ok: false, code: 'CLIPBOARD_READ_FAILED', message: error.message || '读取剪贴板失败。' });
+  }
+}
+
+// 写入电脑剪贴板文本（需要写权限）
+async function handleClipboardWrite(req, res) {
+  if (!isAuthorized(req)) return json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: '访问令牌不正确。' });
+  if (security.tokenScopeFromRequest(req) === 'read-only') {
+    return json(res, 403, { ok: false, code: 'TOKEN_READ_ONLY', message: '只读令牌不能写入剪贴板。' });
+  }
+  let payload = {};
+  try {
+    payload = JSON.parse(await readBody(req) || '{}');
+  } catch (error) {
+    return json(res, 400, { ok: false, code: 'BAD_REQUEST', message: error.message || '请求格式不正确。' });
+  }
+  const text = String(payload.text || '');
+  if (text.length > 1024 * 1024) {
+    return json(res, 413, { ok: false, code: 'CLIPBOARD_TOO_LARGE', message: '剪贴板文本过大。' });
+  }
+  try {
+    await platform.copyTextToClipboard(text);
+    return json(res, 200, { ok: true, message: '已写入电脑剪贴板。' });
+  } catch (error) {
+    return json(res, 500, { ok: false, code: 'CLIPBOARD_WRITE_FAILED', message: error.message || '写入剪贴板失败。' });
+  }
+}
+
 async function handleGitDiff(req, res) {
   if (!isAuthorized(req)) return json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: '访问令牌不正确。' });
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -5472,11 +5609,21 @@ async function handleStats(req, res) {
   }
 }
 
+function generateWebhookSecret() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
 async function handleWebhook(req, res) {
   if (!isAuthorized(req)) return json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: '访问令牌不正确。' });
   if (req.method === 'GET') {
     const state = store.readState();
-    return json(res, 200, { ok: true, webhook: state.webhook || '', enabled: Boolean(state.webhook) });
+    return json(res, 200, {
+      ok: true,
+      webhook: state.webhook || '',
+      enabled: Boolean(state.webhook),
+      signed: Boolean(state.webhook && state.webhookSecret),
+      needsSecret: Boolean(state.webhook && !state.webhookSecret),
+    });
   }
   if (req.method === 'POST') {
     let payload = {};
@@ -5511,22 +5658,49 @@ async function handleWebhook(req, res) {
       }
     }
     const state = store.readState();
+    const shouldRotate = Boolean(payload.rotateSecret) || (Boolean(url) && !state.webhookSecret);
+    const nextSecret = url && shouldRotate ? generateWebhookSecret() : url ? state.webhookSecret : '';
     state.webhook = url;
+    state.webhookSecret = nextSecret;
     store.writeState(state);
-    logger.info('webhook_updated', { enabled: Boolean(url) });
-    return json(res, 200, { ok: true, webhook: url, enabled: Boolean(url), message: url ? '已启用 Webhook 通知。' : '已关闭 Webhook 通知。' });
+    logger.info('webhook_updated', { enabled: Boolean(url), signed: Boolean(url && nextSecret), rotated: Boolean(url && shouldRotate) });
+    return json(res, 200, {
+      ok: true,
+      webhook: url,
+      enabled: Boolean(url),
+      signed: Boolean(url && nextSecret),
+      secret: url && shouldRotate ? nextSecret : '',
+      message: url
+        ? (shouldRotate ? 'Webhook 已启用，签名密钥仅显示这一次，请立即保存。' : 'Webhook 配置已保存。')
+        : '已关闭 Webhook 通知。',
+    });
   }
   return json(res, 405, { ok: false, code: 'METHOD_NOT_ALLOWED', message: 'Method not allowed' });
 }
 
 function fireWebhook(event, payload = {}) {
-  const webhook = store.readState().webhook;
+  const state = store.readState();
+  const webhook = state.webhook;
+  const secret = state.webhookSecret;
   if (!webhook) return;
+  if (!secret) {
+    logger.warn('webhook_unsigned_skipped', { event });
+    return;
+  }
   const httpModule = webhook.startsWith('https:') ? require('https') : require('http');
   const body = JSON.stringify({ event, ...payload, ts: new Date().toISOString() });
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');
   const request = httpModule.request(webhook, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'user-agent': `${APP_NAME}/4.0` },
+    headers: {
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(body),
+      'user-agent': `${APP_NAME}/4.0`,
+      'x-codex-webhook-event': event,
+      'x-codex-webhook-timestamp': timestamp,
+      'x-codex-webhook-signature': `sha256=${signature}`,
+    },
     timeout: 5000,
   }, response => {
     response.resume();
@@ -5542,6 +5716,7 @@ const apiRouteTable = [
   { method: 'GET', prefix: '/codex/health', handler: handleHealth },
   { method: 'POST', prefix: '/codex/rotate-token', handler: handleRotateToken },
   { method: 'GET', prefix: '/codex/download', handler: handleDownload },
+  { method: 'GET', prefix: '/codex/files', handler: handleFileList },
   { method: 'GET', prefix: '/codex/export', handler: handleExport },
   { method: 'GET', prefix: '/codex/search', handler: handleSearch },
   { method: 'GET', prefix: '/codex/screenshot', handler: handleScreenshot },
@@ -5573,6 +5748,8 @@ const apiRouteTable = [
   { method: 'GET', prefix: '/codex/system/overview', handler: handleSystemOverview },
   { method: 'POST', prefix: '/codex/system/control', handler: handleSystemControl },
   { method: 'GET', prefix: '/codex/git/diff', handler: handleGitDiff },
+  { method: 'GET', prefix: '/codex/clipboard', handler: handleClipboardRead },
+  { method: 'POST', prefix: '/codex/clipboard', handler: handleClipboardWrite },
   { method: 'GET', prefix: '/codex/pairing-code', handler: handlePairingCode },
   { method: 'POST', prefix: '/codex/pair', handler: handlePair },
 ];
@@ -5607,13 +5784,16 @@ let server;
 if (USE_HTTPS) {
   const certResult = certManager.ensureCert();
   if (certResult.ok) {
+    LAN_PROTOCOL = 'https';
     server = https.createServer(certManager.loadCredentials(), requestHandler);
     logger.info('https_enabled', { fingerprint: certResult.fingerprint });
   } else {
+    LAN_PROTOCOL = 'http';
     logger.warn('https_fallback', { reason: certResult.error });
     server = http.createServer(requestHandler);
   }
 } else {
+  LAN_PROTOCOL = 'http';
   server = http.createServer(requestHandler);
 }
 
@@ -5647,12 +5827,13 @@ server.listen(PORT, HOST, () => {
   cdpWsHub.start();
   mdnsBroadcaster.start();
   const urls = getLanUrls();
-  const protocol = USE_HTTPS && certManager.hasValidCert() ? 'https' : 'http';
+  const protocol = LAN_PROTOCOL;
   logger.info('server_started', { port: PORT, host: HOST, protocol, version: SERVICE_VERSION, ws: true });
   console.log(`\n${APP_NAME} is running.`);
   console.log('Keep this terminal open, make sure Codex Desktop is available, then open one of these URLs on your phone:');
   for (const url of urls) console.log(`  ${url}`);
-  if (USE_HTTPS) console.log('\nNote: Using HTTPS with self-signed certificate. You may need to accept the certificate warning on your phone.');
+  if (LAN_PROTOCOL === 'https') console.log('\nNote: Using HTTPS with self-signed certificate. You may need to accept the certificate warning on your phone.');
+  else console.log('\nNote: Running over plain HTTP (CODEX_MAX_HTTP_ONLY=1). On an untrusted LAN, prefer HTTPS.');
   console.log('\nTip: phone and this computer must be on the same Wi‑Fi/LAN. Press Ctrl+C to stop.\n');
 });
 

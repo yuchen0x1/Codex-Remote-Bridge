@@ -55,6 +55,7 @@ test('P2-4: /codex/screenshot 鉴权与 CDP 不可用降级', async () => {
       HOME: tmpRoot,
       PORT: String(httpPort),
       HOST: '127.0.0.1',
+      CODEX_MAX_HTTP_ONLY: '1',
       MOBILE_TYPER_TOKEN: TOKEN,
       CODEX_MAX_STATE_DIR: path.join(tmpRoot, '.codex-max'),
       CODEX_MAX_APP_SERVER: '0',

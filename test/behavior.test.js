@@ -505,6 +505,24 @@ test('Store: webhook 配置持久化（合法 URL 保存，非法拒绝）', () 
   }
 });
 
+test('Store: Webhook HMAC 密钥持久化且非法值被清空', () => {
+  const { store, dir } = makeTempStore();
+  try {
+    const state = store.readState();
+    state.webhook = 'https://example.com/hook';
+    state.webhookSecret = 'a'.repeat(64);
+    store.writeState(state);
+    assert.equal(store.readState().webhookSecret, 'a'.repeat(64));
+    const invalid = store.readState();
+    invalid.webhookSecret = 'short';
+    store.writeState(invalid);
+    assert.equal(store.readState().webhookSecret, '');
+  } finally {
+    store.invalidateCache();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('Store: 持久化往返 - 重启后 webhook 与 scheduledTasks 仍在', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmx-store2-'));
   const opts = { stateDir: dir, stateFile: path.join(dir, 'state.json'), tokenFile: path.join(dir, 'token.txt') };

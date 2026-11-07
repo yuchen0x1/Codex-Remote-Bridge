@@ -84,6 +84,7 @@
       }
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     /* 统一微交互过渡：颜色/边框/缩放/透明度 120-200ms 平滑变化 */
     button, a, [role="button"], .icon-btn, .route-badge, .new-thread-btn, .thread-button,
     .thread-action-button, .environment-button, .environment-action, .context-quick-card,
@@ -3342,7 +3343,9 @@
       line-height: 1.35;
     }
     .workspace-check input { width: 16px; height: 16px; accent-color: var(--accent); }
-    .workspace-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .workspace-form-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+    .workspace-secret-row { display: flex; gap: 8px; align-items: stretch; }
+    .workspace-secret-row input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     .workspace-command-button {
       min-height: 36px;
       padding: 0 13px;
@@ -4326,6 +4329,7 @@
       background: rgba(0, 0, 0, 0.55);
       z-index: 200;
     }
+    .pairing-modal[hidden] { display: none; }
     .pairing-card {
       background: var(--composer-bg, #202020);
       border: 1px solid rgba(255, 255, 255, 0.12);
@@ -4542,6 +4546,68 @@
       background: rgba(255, 255, 255, 0.14);
       transform: scale(0.98);
     }
+    .workspace-hint { font-size: 12px; color: var(--muted-2); margin: 4px 0 0; line-height: 1.5; }
+    .clipboard-sync-row { display: grid; gap: 10px; margin-top: 12px; }
+    .clipboard-textarea {
+      width: 100%;
+      box-sizing: border-box;
+      resize: vertical;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(0, 0, 0, 0.25);
+      color: inherit;
+      padding: 10px;
+      font: inherit;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .clipboard-textarea:focus-visible { outline: 2px solid var(--focus-ring, #3b82f6); outline-offset: 1px; }
+    .clipboard-sync-buttons { display: flex; gap: 8px; }
+    .files-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .files-breadcrumb {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      color: var(--muted-2);
+    }
+    .files-toolbar-actions { display: flex; gap: 8px; }
+    .files-toolbar-actions .system-action-btn { flex: 0 0 auto; padding: 8px 12px; font-size: 12px; }
+    .files-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 0;
+      min-width: 0;
+    }
+    .files-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 14px;
+      font-weight: 580;
+      color: var(--text-strong);
+      flex: 1;
+    }
+    .files-meta {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted-3);
+    }
+    .files-size { color: var(--muted-3); font-size: 12px; white-space: nowrap; }
+    .files-dir-label { color: var(--accent); font-size: 11px; }
+    .files-empty { font-size: 13px; color: var(--muted-2); padding: 14px 0; }
     .git-diff-viewer {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
@@ -4658,6 +4724,10 @@
         <button class="drawer-nav-item" id="drawer-system-health" type="button" data-workspace="system-health">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
           <span>电脑状态</span>
+        </button>
+        <button class="drawer-nav-item" id="drawer-files" type="button" data-workspace="files">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 12h18"/></svg>
+          <span>文件</span>
         </button>
         <button class="drawer-nav-item" id="drawer-workspace-diff" type="button" data-workspace="workspace-diff">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
@@ -4987,6 +5057,7 @@
       plugins: '插件',
       settings: '设置',
       archived: '已归档任务',
+      files: '文件',
     };
     let activeWorkspace = 'chat';
     let activePluginTab = 'plugins';
@@ -5000,7 +5071,9 @@
       plugins: null,
       settings: null,
       archived: null,
+      files: null,
     };
+    let fileBrowserState = { cwd: '', path: '', showHidden: false };
     const DESKTOP_PLUGIN_ORDER = [
       'chrome@openai-bundled',
       'computer-use@openai-bundled',
@@ -5141,6 +5214,11 @@
     let activeSettingsGroup = localStorage.getItem(SETTINGS_GROUP_STORAGE_KEY) || SETTINGS_GROUP_BY_CATEGORY[activeSettingsCategory] || 'personal';
     let voiceReadEnabled = localStorage.getItem(VOICE_READ_STORAGE_KEY) === '1';
     let notifyCompleteEnabled = localStorage.getItem(NOTIFY_COMPLETE_STORAGE_KEY) === '1';
+    let webhookConfig = { webhook: '', enabled: false, signed: false, needsSecret: false };
+    let webhookConfigLoading = false;
+    let webhookConfigLoaded = false;
+    let webhookConfigError = '';
+    let webhookSecretNotice = '';
     let uiFontScale = ['small', 'normal', 'large', 'xlarge'].includes(localStorage.getItem(UI_FONT_SCALE_STORAGE_KEY))
       ? localStorage.getItem(UI_FONT_SCALE_STORAGE_KEY)
       : 'normal';
@@ -5261,11 +5339,72 @@
       requestAnimationFrame(() => workspacePanel?.scrollTo?.({ top: 0, behavior: 'instant' }));
     }
 
-    function toggleNotifyComplete() {
-      notifyCompleteEnabled = !notifyCompleteEnabled;
+    async function requestCompletionNotificationPermission() {
+      if (!('Notification' in window)) {
+        setNotice('当前浏览器不支持系统通知', 'error');
+        return false;
+      }
+      if (Notification.permission === 'granted') return true;
+      if (Notification.permission === 'denied') {
+        setNotice('系统通知权限已被拒绝，请在浏览器设置中开启', 'error');
+        return false;
+      }
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') setNotice('未获得系统通知权限', 'error');
+      return permission === 'granted';
+    }
+
+    async function toggleNotifyComplete() {
+      const next = !notifyCompleteEnabled;
+      if (next && !(await requestCompletionNotificationPermission())) return;
+      notifyCompleteEnabled = next;
       localStorage.setItem(NOTIFY_COMPLETE_STORAGE_KEY, notifyCompleteEnabled ? '1' : '0');
       if (activeWorkspace === 'settings') renderWorkspace();
       setNotice(notifyCompleteEnabled ? '已开启回复完成通知' : '已关闭回复完成通知', 'ok');
+    }
+
+    async function loadWebhookConfig() {
+      if (webhookConfigLoading) return;
+      webhookConfigLoading = true;
+      webhookConfigError = '';
+      try {
+        const response = await fetchApi('/codex/webhook', { cache: 'no-store', apiTimeoutMs: 8000 });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) throw new Error(data.message || '读取 Webhook 配置失败');
+        webhookConfig = {
+          webhook: String(data.webhook || ''),
+          enabled: Boolean(data.enabled),
+          signed: Boolean(data.signed),
+          needsSecret: Boolean(data.needsSecret),
+        };
+        webhookConfigLoaded = true;
+      } catch (error) {
+        webhookConfigError = error.message || '读取 Webhook 配置失败';
+      } finally {
+        webhookConfigLoading = false;
+        webhookConfigLoaded = true;
+        if (activeWorkspace === 'settings') renderWorkspace();
+      }
+    }
+
+    async function saveWebhookConfig(url, rotateSecret = false) {
+      const response = await fetchApi('/codex/webhook', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-mobile-typer-token': token },
+        body: JSON.stringify({ url, rotateSecret }),
+        apiTimeoutMs: 10000,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.message || '保存 Webhook 配置失败');
+      webhookConfig = {
+        webhook: String(data.webhook || ''),
+        enabled: Boolean(data.enabled),
+        signed: Boolean(data.signed),
+        needsSecret: false,
+      };
+      if (data.secret) webhookSecretNotice = data.secret;
+      if (activeWorkspace === 'settings') renderWorkspace();
+      return data;
     }
 
     function toggleVoiceRead() {
@@ -5372,6 +5511,16 @@
       window.speechSynthesis.speak(utterance);
       setNotice('正在朗读回复', 'ok');
     }
+    function showCompletionNotification(title, body, isError = false) {
+      if (!notifyCompleteEnabled || !('Notification' in window) || document.visibilityState === 'visible') return;
+      if (Notification.permission !== 'granted') return;
+      new Notification(title, {
+        body: String(body || '').slice(0, 160),
+        icon: 'icons/icon-192.png',
+        tag: isError ? 'codex-failed' : 'codex-complete',
+      });
+    }
+
     function speakLatestAssistantReply() {
       const latest = [...thread.querySelectorAll('.message.assistant .bubble')].pop();
       if (!latest) {
@@ -9057,6 +9206,90 @@ function addDetails(message, steps = [], liveUpdate = false) {
       return '圆环';
     }
 
+    function renderWebhookSettingsSection(parent) {
+      if (!webhookConfigLoaded && !webhookConfigLoading) loadWebhookConfig();
+      const section = workspaceElement('section', 'workspace-section');
+      section.appendChild(workspaceElement('h2', 'workspace-section-title', 'Webhook 通知'));
+      if (webhookConfigLoading && !webhookConfig.webhook) {
+        section.appendChild(workspaceState('正在读取 Webhook 配置…'));
+        parent.appendChild(section);
+        return;
+      }
+      if (webhookConfigError) section.appendChild(workspaceElement('p', 'workspace-error', webhookConfigError));
+      const form = workspaceElement('form', 'workspace-form');
+      const urlField = workspaceElement('div', 'workspace-field');
+      const urlLabel = workspaceElement('label', '', '接收地址');
+      const urlInput = document.createElement('input');
+      urlInput.type = 'url';
+      urlInput.name = 'webhook';
+      urlInput.autocomplete = 'off';
+      urlInput.placeholder = 'https://example.com/codex-webhook';
+      urlInput.value = webhookConfig.webhook || '';
+      urlInput.disabled = isReadOnlyMode();
+      urlField.append(urlLabel, urlInput);
+      const status = workspaceElement('p', 'workspace-hint', webhookConfig.enabled
+        ? (webhookConfig.signed ? '已启用 HMAC-SHA256 签名。接收方请校验 timestamp + "." + body。' : '已启用，但还没有签名密钥。保存地址会自动生成密钥。')
+        : '关闭状态。保存一个 HTTPS 地址后接收任务发送成功/失败事件。');
+      const actions = workspaceElement('div', 'workspace-form-actions');
+      const save = workspaceElement('button', 'workspace-command-button is-primary', '保存 Webhook');
+      save.type = 'submit';
+      save.disabled = isReadOnlyMode();
+      actions.appendChild(save);
+      if (webhookConfig.enabled) {
+        const rotate = workspaceElement('button', 'workspace-command-button', '轮换签名密钥');
+        rotate.type = 'button';
+        rotate.disabled = isReadOnlyMode();
+        rotate.addEventListener('click', async () => {
+          rotate.disabled = true;
+          try {
+            await saveWebhookConfig(urlInput.value.trim(), true);
+            setNotice('签名密钥已轮换，请保存当前页面显示的密钥', 'ok');
+          } catch (error) {
+            setNotice(error.message || '轮换签名密钥失败', 'error');
+            rotate.disabled = false;
+          }
+        });
+        actions.appendChild(rotate);
+      }
+      form.append(urlField, status, actions);
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        save.disabled = true;
+        try {
+          const data = await saveWebhookConfig(urlInput.value.trim(), false);
+          setNotice(data.enabled ? 'Webhook 已保存' : 'Webhook 已关闭', 'ok');
+        } catch (error) {
+          setNotice(error.message || '保存 Webhook 失败', 'error');
+          save.disabled = false;
+        }
+      });
+      section.appendChild(form);
+      if (webhookSecretNotice) {
+        const secretField = workspaceElement('div', 'workspace-field webhook-secret-field');
+        const secretLabel = workspaceElement('label', '', '本次生成的签名密钥（仅在当前页面显示）');
+        const secretRow = workspaceElement('div', 'workspace-secret-row');
+        const secretInput = document.createElement('input');
+        secretInput.type = 'text';
+        secretInput.readOnly = true;
+        secretInput.value = webhookSecretNotice;
+        const copy = workspaceElement('button', 'workspace-command-button', '复制');
+        copy.type = 'button';
+        copy.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(webhookSecretNotice);
+            setNotice('签名密钥已复制', 'ok');
+          } catch {
+            secretInput.select();
+            setNotice('复制失败，请手动复制密钥', 'error');
+          }
+        });
+        secretRow.append(secretInput, copy);
+        secretField.append(secretLabel, secretRow);
+        section.appendChild(secretField);
+      }
+      parent.appendChild(section);
+    }
+
     function renderSettingsWorkspace() {
       const data = workspaceData.settings || {};
       const health = data.health || {};
@@ -9190,6 +9423,7 @@ function addDetails(message, steps = [], liveUpdate = false) {
             { title: '定时任务', detail: health.scheduledTasks !== undefined ? `${health.scheduledTasks} 个计划 · ${health.activeScheduledTasks || 0} 个启用` : '—', meta: health.scheduledTasks > 0 ? '运行中' : '空闲' },
             { title: 'CDP 状态', detail: health.cdp ? (health.cdp.available ? `端口 ${health.cdp.port || 9222}` : (health.cdp.message || '未连接')) : '—', meta: health.cdp?.available ? '可用' : '离线' },
           ], content);
+          renderWebhookSettingsSection(content);
         },
         personalization: () => appendSettingsSection('个性化', [
           { title: t('language'), detail: t('languageDetail'), metaNode: workspaceActionButton(t('languageValue'), toggleUiLanguage) },
@@ -9372,6 +9606,48 @@ function addDetails(message, steps = [], liveUpdate = false) {
       actionsBar.append(lockBtn, keepAwakeActionBtn);
       controlSection.appendChild(actionsBar);
       workspaceContent.appendChild(controlSection);
+
+      const clipboardSection = workspaceElement('section', 'workspace-section');
+      clipboardSection.appendChild(workspaceElement('h2', 'workspace-section-title', '剪贴板同步'));
+      const clipboardHint = workspaceElement('p', 'workspace-hint', '读取电脑剪贴板，或把手机上的文字写入电脑剪贴板（仅供粘贴）。');
+      const clipboardRow = workspaceElement('div', 'clipboard-sync-row');
+      const clipboardArea = document.createElement('textarea');
+      clipboardArea.className = 'clipboard-textarea';
+      clipboardArea.rows = 3;
+      clipboardArea.placeholder = '剪贴板内容会显示在这里…';
+      const clipboardButtons = workspaceElement('div', 'clipboard-sync-buttons');
+      const readClipBtn = workspaceElement('button', 'system-action-btn', '⬆️ 读取电脑剪贴板');
+      readClipBtn.type = 'button';
+      readClipBtn.addEventListener('click', async () => {
+        triggerHaptic(30);
+        try {
+          const res = await fetchApi('/codex/clipboard', { method: 'GET' });
+          const result = await res.json().catch(() => ({}));
+          if (!result.ok) throw new Error(result.message || '读取失败');
+          clipboardArea.value = result.text || '';
+          setNotice(result.hasText ? '已读取电脑剪贴板' : '电脑剪贴板当前为空', result.hasText ? 'ok' : 'info');
+        } catch (err) {
+          setNotice('读取剪贴板失败: ' + err.message, 'error');
+        }
+      });
+      const writeClipBtn = workspaceElement('button', 'system-action-btn', '⬇️ 写入电脑剪贴板');
+      writeClipBtn.type = 'button';
+      writeClipBtn.addEventListener('click', async () => {
+        triggerHaptic(30);
+        const text = clipboardArea.value;
+        if (!text.trim()) { setNotice('请先输入要写入剪贴板的文字', 'info'); return; }
+        try {
+          const res = await fetchApi('/codex/clipboard', { method: 'POST', body: JSON.stringify({ text }) });
+          const result = await res.json().catch(() => ({}));
+          setNotice(result.message || '已写入电脑剪贴板', result.ok ? 'ok' : 'error');
+        } catch (err) {
+          setNotice('写入剪贴板失败: ' + err.message, 'error');
+        }
+      });
+      clipboardButtons.append(readClipBtn, writeClipBtn);
+      clipboardRow.append(clipboardArea, clipboardButtons);
+      clipboardSection.append(clipboardHint, clipboardRow);
+      workspaceContent.appendChild(clipboardSection);
     }
 
     function renderWorkspaceDiffWorkspace() {
@@ -9402,6 +9678,151 @@ function addDetails(message, steps = [], liveUpdate = false) {
       workspaceContent.appendChild(diffViewer);
     }
 
+    function formatBytesInline(bytes) {
+      const value = Number(bytes || 0);
+      if (value >= 1024 * 1024 * 1024) return `${(value / 1024 / 1024 / 1024).toFixed(1)}GB`;
+      if (value >= 1024 * 1024) return `${Math.round(value / 1024 / 1024)}MB`;
+      if (value >= 1024) return `${Math.round(value / 1024)}KB`;
+      return `${value}B`;
+    }
+
+    function filesSafeJoin(base, name) {
+      if (!base) return name;
+      return `${base.replace(/\/+$/g, '')}/${name}`;
+    }
+
+    function downloadProjectFile(item) {
+      triggerHaptic(25);
+      if (!item.isFile || !item.downloadable) return;
+      const cwd = encodeURIComponent(fileBrowserState.cwd || '');
+      const file = encodeURIComponent(fileBrowserState.path ? `${fileBrowserState.path.replace(/\/+$/g, '')}/${item.name}` : item.name);
+      const target = apiUrl(`/codex/download?cwd=${cwd}&file=${file}&token=${encodeURIComponent(token || '')}`);
+      window.location.href = target;
+      setNotice('正在下载 ' + item.name, 'ok');
+    }
+
+    function renderFilesWorkspace() {
+      workspaceContent.appendChild(workspaceHeading('文件浏览'));
+      const data = workspaceData['files'];
+      if (workspaceLoading.has('files') && !data) {
+        workspaceContent.appendChild(workspaceState('正在读取目录…'));
+        return;
+      }
+      const error = renderWorkspaceError(data, 'files');
+      if (error) workspaceContent.appendChild(error);
+      if (!data) {
+        workspaceContent.appendChild(workspaceState('请选择一个项目工作区以浏览其文件。'));
+        return;
+      }
+      const projects = Array.isArray(data.projects) ? data.projects : [];
+      const currentCwd = fileBrowserState.cwd;
+      const isPicking = !currentCwd || !projects.includes(currentCwd);
+      if (isPicking) {
+        const list = workspaceElement('div', 'workspace-list');
+        if (!projects.length) {
+          workspaceContent.appendChild(workspaceState('没有可浏览的项目工作区。'));
+          return;
+        }
+        for (const project of projects) {
+          const row = workspaceElement('div', 'workspace-row');
+          row.classList.add('files-row');
+          const nameEl = workspaceElement('div', 'files-name', project);
+          row.appendChild(nameEl);
+          row.addEventListener('click', () => {
+            triggerHaptic(25);
+            fileBrowserState.cwd = project;
+            fileBrowserState.path = '';
+            workspaceData['files'] = null;
+            loadWorkspaceData('files', { force: true });
+          });
+          list.appendChild(row);
+        }
+        workspaceContent.appendChild(list);
+        return;
+      }
+      const toolbar = workspaceElement('div', 'files-toolbar');
+      const breadcrumb = workspaceElement('div', 'files-breadcrumb', data.path || '/');
+      const actions = workspaceElement('div', 'files-toolbar-actions');
+      const upBtn = workspaceElement('button', 'system-action-btn', '上一级');
+      upBtn.type = 'button';
+      upBtn.disabled = !data.parent;
+      upBtn.addEventListener('click', () => {
+        if (!data.parent) return;
+        triggerHaptic(25);
+        fileBrowserState.path = data.parent;
+        workspaceData['files'] = null;
+        loadWorkspaceData('files', { force: true });
+      });
+      const switchBtn = workspaceElement('button', 'system-action-btn', '切换项目');
+      switchBtn.type = 'button';
+      switchBtn.addEventListener('click', () => {
+        triggerHaptic(25);
+        fileBrowserState.cwd = '';
+        fileBrowserState.path = '';
+        if (workspaceData['files']) {
+          workspaceData['files'].path = '';
+          workspaceData['files'].parent = '';
+          workspaceData['files'].items = [];
+        }
+        renderWorkspace();
+      });
+      const hiddenBtn = workspaceElement('button', 'system-action-btn', fileBrowserState.showHidden ? '隐藏隐藏文件' : '显示隐藏文件');
+      hiddenBtn.type = 'button';
+      hiddenBtn.addEventListener('click', () => {
+        fileBrowserState.showHidden = !fileBrowserState.showHidden;
+        workspaceData['files'] = null;
+        loadWorkspaceData('files', { force: true });
+      });
+      actions.append(upBtn, hiddenBtn, switchBtn);
+      toolbar.append(breadcrumb, actions);
+      workspaceContent.appendChild(toolbar);
+      const items = Array.isArray(data.items) ? data.items : [];
+      if (!items.length) {
+        workspaceContent.appendChild(workspaceElement('p', 'files-empty', '此目录为空。'));
+        return;
+      }
+      const list = workspaceElement('div', 'workspace-list');
+      for (const item of items) {
+        const row = workspaceElement('div', 'workspace-row');
+        row.classList.add('files-row');
+        const nameEl = workspaceElement('div', 'files-name', item.name);
+        row.appendChild(nameEl);
+        const meta = workspaceElement('div', 'files-meta');
+        if (item.isDir) {
+          meta.appendChild(workspaceElement('span', 'files-dir-label', 'dir'));
+          row.addEventListener('click', () => {
+            triggerHaptic(25);
+            fileBrowserState.path = filesSafeJoin(fileBrowserState.path, item.name);
+            workspaceData['files'] = null;
+            loadWorkspaceData('files', { force: true });
+          });
+        } else if (item.isFile) {
+          const sizeEl = workspaceElement('span', 'files-size', formatBytesInline(item.size));
+          meta.appendChild(sizeEl);
+          if (item.downloadable) {
+            const dlBtn = workspaceElement('button', 'system-action-btn', '下载');
+            dlBtn.type = 'button';
+            dlBtn.style.flex = '0 0 auto';
+            dlBtn.style.padding = '4px 10px';
+            dlBtn.style.fontSize = '12px';
+            dlBtn.addEventListener('click', event => {
+              event.stopPropagation();
+              downloadProjectFile(item);
+            });
+            meta.appendChild(dlBtn);
+          } else {
+            meta.appendChild(workspaceElement('span', 'files-size', '过大'));
+          }
+          row.addEventListener('click', () => downloadProjectFile(item));
+        } else {
+          meta.appendChild(workspaceElement('span', 'files-dir-label', '其他'));
+        }
+        row.appendChild(meta);
+        list.appendChild(row);
+      }
+      workspaceContent.appendChild(list);
+    }
+
     function renderWorkspace() {
       if (activeWorkspace === 'chat') return;
       workspaceContent.innerHTML = '';
@@ -9412,6 +9833,7 @@ function addDetails(message, steps = [], liveUpdate = false) {
       else if (activeWorkspace === 'plugins') renderPluginsWorkspace();
       else if (activeWorkspace === 'settings') renderSettingsWorkspace();
       else if (activeWorkspace === 'archived') renderArchivedWorkspace();
+      else if (activeWorkspace === 'files') renderFilesWorkspace();
     }
 
     function renderWorkspaceNavigation() {
@@ -9445,6 +9867,28 @@ function addDetails(message, steps = [], liveUpdate = false) {
     async function loadWorkspaceData(kind = activeWorkspace, options = {}) {
       if (kind === 'chat' || workspaceLoading.has(kind)) return;
       if (kind === 'settings') return loadSettingsWorkspaceData(options);
+      if (kind === 'files') {
+        workspaceLoading.add(kind);
+        workspaceErrors[kind] = '';
+        if (kind === activeWorkspace) renderWorkspace();
+        try {
+          const params = new URLSearchParams({ token });
+          if (options.force) params.set('refresh', String(Date.now()));
+          if (fileBrowserState.cwd) params.set('cwd', fileBrowserState.cwd);
+          if (fileBrowserState.path) params.set('path', fileBrowserState.path);
+          if (fileBrowserState.showHidden) params.set('showHidden', '1');
+          const response = await fetchApi(`/codex/files?${params}`, { cache: 'no-store', apiTimeoutMs: 20000 });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.ok) throw new Error(data.message || '读取文件目录失败');
+          workspaceData[kind] = data;
+        } catch (error) {
+          workspaceErrors[kind] = error.message || '读取文件目录失败';
+        } finally {
+          workspaceLoading.delete(kind);
+          if (kind === activeWorkspace) renderWorkspace();
+        }
+        return;
+      }
       const endpoint = {
         'system-health': '/codex/system/overview',
         'workspace-diff': '/codex/git/diff',
@@ -10832,13 +11276,11 @@ function stopPolling() {
           serializeMessages();
           if (!isErrorStatus && promoteNextQueuedSendAfterCurrent(data)) return;
           if (isErrorStatus) clearQueuedSends();
-          if (notifyCompleteEnabled && 'Notification' in window && !isErrorStatus) {
-            if (Notification.permission === 'granted') {
-              new Notification('Codex 回复完成', { body: finalText.slice(0, 120), icon: 'icons/icon-192.png', tag: 'codex-complete' });
-            } else if (Notification.permission !== 'denied') {
-              Notification.requestPermission().then(p => { if (p === 'granted') new Notification('Codex 回复完成', { body: finalText.slice(0, 120), icon: 'icons/icon-192.png', tag: 'codex-complete' }); });
-            }
-          }
+          showCompletionNotification(
+            isErrorStatus ? 'Codex 回复失败' : 'Codex 回复完成',
+            finalText,
+            isErrorStatus,
+          );
           activeAssistant = null;
           thread.querySelectorAll('.message.user .msg-status.is-sending').forEach(el => {
             el.className = 'msg-status is-sent';
