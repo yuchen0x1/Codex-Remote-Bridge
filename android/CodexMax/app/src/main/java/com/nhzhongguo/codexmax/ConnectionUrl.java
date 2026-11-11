@@ -56,6 +56,16 @@ public final class ConnectionUrl {
         return token;
     }
 
+    /** 连接协议：https 或 http。自签名证书固定只对 https 生效。 */
+    public String scheme() {
+        return uri.getScheme() == null ? "http" : uri.getScheme().toLowerCase();
+    }
+
+    /** 健康检查地址（不鉴权），用于首次固定证书指纹。 */
+    public String healthUrl() {
+        return origin() + "/codex/health";
+    }
+
     public String statusUrl() {
         return origin() + "/codex/status?token=" + encode(token);
     }

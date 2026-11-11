@@ -90,6 +90,19 @@ test('Router: 前缀路由精确匹配并返回 JSON', async () => {
   assert.equal(body.from, 'prefix');
 });
 
+test('Router: 前缀路由不接受相邻路径名误匹配', async () => {
+  let delegated = false;
+  const router = makeTestRouter(null);
+  router.staticHandler = (req, res) => {
+    delegated = true;
+    json200(res, { ok: true, from: 'static' });
+  };
+  const result = await dispatchJson(router, mockReq({ url: '/api/exactly' }));
+  assert.equal(result.status, 200);
+  assert.equal(result.body.from, 'static');
+  assert.equal(delegated, true);
+});
+
 test('Router: 未注册路径在 GET 下委托静态文件 / 否则返回 405', async () => {
   // POST 未注册路径 → 405
   const router = makeTestRouter(null);
@@ -107,12 +120,16 @@ test('Router: 未注册路径在 GET 下委托静态文件 / 否则返回 405', 
   assert.equal(delegated, true, 'GET 应委托给 staticHandler');
 });
 
-test('Router: 限流命中返回 429，health 豁免', async () => {
+test('Router: 限流命中返回 429（含 Retry-After），health 豁免', async () => {
   let remaining = 3;
   const fakeSecurity = {
-    rateLimitCheck(ip) {
-      if (remaining > 0) { remaining -= 1; return true; }
-      return false;
+    rateLimitClass() { return 'api'; },
+    rateLimitCheck() {
+      if (remaining > 0) {
+        remaining -= 1;
+        return { allowed: true, kind: 'api', limit: 600, remaining, retryAfterSeconds: 0 };
+      }
+      return { allowed: false, kind: 'api', limit: 600, remaining: 0, retryAfterSeconds: 7 };
     },
   };
   const router = makeTestRouter(fakeSecurity);
@@ -125,15 +142,32 @@ test('Router: 限流命中返回 429，health 豁免', async () => {
   const limited = await dispatchJson(router, mockReq({ url: '/api/exact' }));
   assert.equal(limited.status, 429);
   assert.equal(limited.body.code, 'RATE_LIMITED');
+  assert.equal(limited.body.retryAfterSeconds, 7, '429 响应携带重试秒数');
   // health 豁免：即使无配额也放行
   let exhausted = false;
   const healthRouter = makeTestRouter({
-    rateLimitCheck() { exhausted = true; return false; },
+    rateLimitClass() { return 'api'; },
+    rateLimitCheck() { exhausted = true; return { allowed: false, kind: 'api', limit: 600, remaining: 0, retryAfterSeconds: 5 }; },
   });
   healthRouter.prefix('GET', '/codex/health', (req, res) => json200(res, { ok: true }));
   const health = await dispatchJson(healthRouter, mockReq({ url: '/codex/health' }));
   assert.equal(health.status, 200);
   assert.equal(exhausted, false, 'health 不应触发限流检查');
+});
+
+test('Router: 静态资源不参与限流', async () => {
+  let calls = 0;
+  const fakeSecurity = {
+    rateLimitClass(req, pathname) {
+      return pathname.startsWith('/codex') ? 'api' : 'static';
+    },
+    rateLimitCheck() { calls += 1; return { allowed: true, kind: 'api', limit: 600, remaining: 1, retryAfterSeconds: 0 }; },
+  };
+  const router = makeTestRouter(fakeSecurity);
+  router.staticHandler = (req, res) => json200(res, { ok: true, from: 'static' });
+  const { status } = await dispatchJson(router, mockReq({ url: '/icons/icon-192.png' }));
+  assert.equal(status, 200);
+  assert.equal(calls, 0, '静态资源请求不应进入限流计数');
 });
 
 test('Router: 分发异常被捕获并返回 500 JSON', async () => {
@@ -216,17 +250,98 @@ test('Security: 短时会话可通过 Cookie 或 Header 鉴权', () => {
   }
 });
 
-test('Security: 令牌桶限流按 IP 计数', () => {
+test('Security: 连续补充限流 - 突发额度用尽后按速率恢复', () => {
   const security = new Security({ initialToken: 't' });
   try {
-    // 默认 burst >= 10，连续打爆后必须限流
-    const burst = security.RATE_LIMIT_BURST;
-    for (let i = 0; i < burst; i++) {
-      assert.equal(security.rateLimitCheck('1.2.3.4'), true, `第 ${i + 1} 次应放行`);
+    const policy = security._rateLimitPolicy('api');
+    // 连续打满突发额度
+    for (let i = 0; i < policy.burst; i++) {
+      const verdict = security.rateLimitCheck('1.2.3.4', '', 'api');
+      assert.equal(verdict.allowed, true, `第 ${i + 1} 次应放行`);
     }
-    assert.equal(security.rateLimitCheck('1.2.3.4'), false, '超出 burst 后应限流');
+    const blocked = security.rateLimitCheck('1.2.3.4', '', 'api');
+    assert.equal(blocked.allowed, false, '突发额度用尽后应限流');
+    assert.ok(blocked.retryAfterSeconds >= 1, '给出重试秒数');
+    assert.equal(blocked.remaining, 0, '剩余额度归零');
     // 其他 IP 不受影响
-    assert.equal(security.rateLimitCheck('5.6.7.8'), true);
+    assert.equal(security.rateLimitCheck('5.6.7.8', '', 'api').allowed, true);
+  } finally {
+    security.destroy();
+  }
+});
+
+test('Security: 连续补充限流 - 静置后自动恢复而不是整分钟重置', () => {
+  const security = new Security({ initialToken: 't' });
+  try {
+    const policy = security._rateLimitPolicy('api');
+    for (let i = 0; i < policy.burst; i++) security.rateLimitCheck('9.9.9.9', '', 'api');
+    assert.equal(security.rateLimitCheck('9.9.9.9', '', 'api').allowed, false);
+
+    // 直接把桶的回拨时间提前 1 秒，模拟时间流逝 1 秒
+    for (const bucket of security.rateLimitBuckets.values()) bucket.updatedAt -= 1000;
+    const after1s = security.rateLimitCheck('9.9.9.9', '', 'api');
+    // 600 rpm => 10 个/秒，静置 1 秒必然补充到 >=1 个令牌
+    assert.equal(after1s.allowed, true, '静置 1 秒后应恢复，而不是等满 60 秒');
+  } finally {
+    security.destroy();
+  }
+});
+
+test('Security: 分档限流 - 写操作与只读 API 额度独立', () => {
+  const security = new Security({ initialToken: 't' });
+  try {
+    const writePolicy = security._rateLimitPolicy('write');
+    for (let i = 0; i < writePolicy.burst; i++) {
+      assert.equal(security.rateLimitCheck('7.7.7.7', '', 'write').allowed, true);
+    }
+    assert.equal(security.rateLimitCheck('7.7.7.7', '', 'write').allowed, false, '写额度用尽');
+    // 读额度不受写额度影响
+    assert.equal(security.rateLimitCheck('7.7.7.7', '', 'api').allowed, true, '读额度独立');
+  } finally {
+    security.destroy();
+  }
+});
+
+test('Security: 分档限流 - 静态资源不做限流', () => {
+  const security = new Security({ initialToken: 't' });
+  try {
+    const verdict = security.rateLimitCheck('8.8.8.8', '', 'static');
+    assert.equal(verdict.allowed, true);
+    assert.equal(security.rateLimitBuckets.size, 0, '静态档位不创建桶');
+    // 归类函数：页面/图标为 static，API 为 api，POST 为 write，无凭据为 anon
+    assert.equal(security.rateLimitClass({ method: 'GET' }, '/icons/icon-192.png', false), 'static');
+    assert.equal(security.rateLimitClass({ method: 'GET' }, '/sw.js', false), 'static');
+    assert.equal(security.rateLimitClass({ method: 'GET' }, '/codex/threads', true), 'api');
+    assert.equal(security.rateLimitClass({ method: 'POST' }, '/send', true), 'write');
+    assert.equal(security.rateLimitClass({ method: 'GET' }, '/codex/threads', false), 'anon');
+  } finally {
+    security.destroy();
+  }
+});
+
+test('Security: 双维度限流 - token 维度独立计数', () => {
+  const security = new Security({ initialToken: 't' });
+  try {
+    const burst = security._rateLimitPolicy('api').burst;
+    // 同一 IP 不同 token 各自独立计数
+    for (let i = 0; i < burst; i++) {
+      assert.equal(security.rateLimitCheck('1.1.1.1', 'token-a', 'api').allowed, true);
+    }
+    // IP 维度已耗尽，即使换 token 也被拒绝（IP 维度优先）
+    assert.equal(security.rateLimitCheck('1.1.1.1', 'token-b', 'api').allowed, false);
+    // 不同 IP + 同 token：IP 维度放行但 token 维度会累积
+    const secondIp = new Security({ initialToken: 't' });
+    try {
+      for (let i = 0; i < burst; i++) {
+        assert.equal(secondIp.rateLimitCheck('2.2.2.2', 'token-a', 'api').allowed, true);
+      }
+      // token-a 维度已耗尽
+      assert.equal(secondIp.rateLimitCheck('3.3.3.3', 'token-a', 'api').allowed, false);
+      // 不同 token 不受影响
+      assert.equal(secondIp.rateLimitCheck('3.3.3.3', 'token-c', 'api').allowed, true);
+    } finally {
+      secondIp.destroy();
+    }
   } finally {
     security.destroy();
   }
@@ -243,41 +358,46 @@ test('Security: rotateToken 生成新 token', () => {
   }
 });
 
-test('Security: 双维度限流 - token 维度独立计数', () => {
+test('Security: 无 IP 时拒绝限流', () => {
   const security = new Security({ initialToken: 't' });
   try {
-    const burst = security.RATE_LIMIT_BURST;
-    // 同一 IP 不同 token 各自独立计数
-    for (let i = 0; i < burst; i++) {
-      assert.equal(security.rateLimitCheck('1.1.1.1', 'token-a'), true);
-    }
-    // IP 维度已耗尽，即使换 token 也被拒绝（IP 维度优先）
-    assert.equal(security.rateLimitCheck('1.1.1.1', 'token-b'), false);
-    // 不同 IP + 同 token：IP 维度放行但 token 维度会累积
-    const secondIp = new Security({ initialToken: 't' });
-    try {
-      for (let i = 0; i < burst; i++) {
-        assert.equal(secondIp.rateLimitCheck('2.2.2.2', 'token-a'), true);
-      }
-      // token-a 维度已耗尽
-      assert.equal(secondIp.rateLimitCheck('3.3.3.3', 'token-a'), false);
-      // 不同 token 不受影响
-      assert.equal(secondIp.rateLimitCheck('3.3.3.3', 'token-c'), true);
-    } finally {
-      secondIp.destroy();
-    }
+    assert.equal(security.rateLimitCheck('', '', 'api').allowed, false);
+    assert.equal(security.rateLimitCheck('', '', 'static').allowed, true, '静态资源无需 IP');
   } finally {
     security.destroy();
   }
 });
 
-test('Security: 无 IP 时拒绝限流', () => {
-  const security = new Security({ initialToken: 't' });
-  try {
-    assert.equal(security.rateLimitCheck(''), false);
-  } finally {
-    security.destroy();
+// ---- Logger 脱敏 ----
+
+test('Logger: 访问日志不泄漏 token / pair / code / signature', () => {
+  const { redactUrl } = require('../src/logger');
+  const cases = [
+    ['/codex/threads?limit=1&token=SECRET123', 'SECRET123'],
+    ['/?token=abc&pair=123456', '123456'],
+    ['/codex/pair?code=654321', '654321'],
+    ['/codex/webhook?signature=deadbeef', 'deadbeef'],
+  ];
+  for (const [input, secret] of cases) {
+    const output = redactUrl(input);
+    assert.ok(!output.includes(secret), `${input} 中的凭据被脱敏`);
+    assert.ok(output.includes('[redacted]'), `${input} 保留占位标记`);
   }
+  // 非敏感参数原样保留，便于排障
+  assert.equal(redactUrl('/codex/threads?limit=120&since=abc'), '/codex/threads?limit=120&since=abc');
+  assert.equal(redactUrl('/icons/icon-192.png'), '/icons/icon-192.png');
+});
+
+test('Logger: logRequest 输出的 url 已脱敏', () => {
+  const { Logger } = require('../src/logger');
+  const lines = [];
+  const logger = new Logger({ json: false });
+  logger.info = (msg, data) => lines.push({ msg, data });
+  logger.logRequest({ method: 'GET', url: '/codex/status?token=SUPERSECRET&thread=x', socket: { remoteAddress: '::ffff:10.0.0.2' } }, 200, 12);
+  const entry = lines.find(item => item.msg === 'http_request');
+  assert.ok(entry, '记录了 http_request');
+  assert.ok(!JSON.stringify(entry.data).includes('SUPERSECRET'), '日志中不含 token 原文');
+  assert.equal(entry.data.ip, '10.0.0.2', 'IP 正常记录');
 });
 
 test('Router: token 从 header / query 提取', () => {
@@ -429,8 +549,12 @@ test('CertificateManager: 纯 Node 生成自签名证书并通过 TLS 握手', a
     const x509 = new crypto.X509Certificate(certPem);
     const validTo = x509.validToDate instanceof Date ? x509.validToDate : new Date(x509.validTo);
     assert.ok(validTo.getTime() > Date.now(), '证书未过期');
-    assert.ok(x509.checkHost('127.0.0.1'), 'SAN 应匹配 127.0.0.1');
-    assert.ok(!x509.checkHost('evil.example.com'), '不应匹配未知域名');
+    // 注意：Node 的 checkHost 对 IP 字面量返回 undefined（而非 false/字符串），
+    // 因此这里直接断言 SAN 扩展内容，比依赖 checkHost 的返回形态更可靠。
+    const san = x509.subjectAltName || '';
+    assert.match(san, /IP Address:127\.0\.0\.1/, 'SAN 应包含 127.0.0.1');
+    assert.match(san, /DNS:localhost/, 'SAN 应包含 localhost');
+    assert.ok(!san.includes('evil.example.com'), '不应包含未知域名');
 
     // 用该证书真实启动 HTTPS 服务器并完成受信任握手
     const server = https.createServer({ cert: certPem, key: fs.readFileSync(result.keyFile, 'utf8') }, (req, res) => res.end('ok'));
@@ -450,6 +574,39 @@ test('CertificateManager: 纯 Node 生成自签名证书并通过 TLS 握手', a
     } finally {
       server.close();
     }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CertificateManager: 证书 SAN 覆盖全部局域网地址，地址变化时重签', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmx-cert3-'));
+  const certFile = path.join(dir, 'cert.pem');
+  const cm = new CertificateManager({ certDir: dir, certFile, keyFile: path.join(dir, 'key.pem') });
+  try {
+    // 首次签发：覆盖两个局域网地址
+    const first = cm.ensureCert(['codex-max-local', '192.168.1.10', '10.0.0.5']);
+    assert.equal(first.ok, true, first.error || '');
+    const san1 = new crypto.X509Certificate(fs.readFileSync(certFile, 'utf8')).subjectAltName || '';
+    assert.match(san1, /IP Address:192\.168\.1\.10/, 'SAN 覆盖第一个局域网地址');
+    assert.match(san1, /IP Address:10\.0\.0\.5/, 'SAN 覆盖第二个局域网地址');
+    const fingerprint1 = first.fingerprint;
+    assert.ok(fingerprint1, '返回指纹');
+
+    // 同一组地址：不重签，指纹不变
+    const same = cm.ensureCert(['codex-max-local', '192.168.1.10', '10.0.0.5']);
+    assert.equal(same.ok, true);
+    assert.equal(same.fingerprint, fingerprint1, '地址未变时指纹保持不变');
+    assert.equal(same.reissuedFor, undefined, '不应触发重签');
+
+    // 换了 Wi-Fi，出现新地址：必须重签并覆盖新地址（否则手机连新 IP 会报证书名不匹配）
+    const changed = cm.ensureCert(['codex-max-local', '192.168.1.10', '10.0.0.5', '172.20.0.9']);
+    assert.equal(changed.ok, true, changed.error || '');
+    assert.deepEqual(changed.reissuedFor, ['172.20.0.9'], '重新签发的原因是新地址');
+    const san2 = new crypto.X509Certificate(fs.readFileSync(certFile, 'utf8')).subjectAltName || '';
+    assert.match(san2, /IP Address:172\.20\.0\.9/, 'SAN 覆盖新地址');
+    assert.match(san2, /IP Address:192\.168\.1\.10/, '旧地址仍保留');
+    assert.notEqual(changed.fingerprint, fingerprint1, '重签后指纹变化');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -539,6 +696,63 @@ test('Store: 持久化往返 - 重启后 webhook 与 scheduledTasks 仍在', () 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// 回归：历史上 server.js 与 Store 各有一套 state.json 写入器且字段集不同，
+// 保存提示词库会抹掉 webhook 密钥，保存 webhook 会抹掉提示词库。
+test('Store: 单一写入者 - 多字段交叉写入互不覆盖', () => {
+  const { store, dir } = makeTempStore();
+  const stateFile = path.join(dir, 'state.json');
+  try {
+    // 1) 写 webhook
+    let state = store.readState();
+    state.webhook = 'https://example.com/hook';
+    state.webhookSecret = 'a'.repeat(64);
+    store.writeState(state);
+
+    // 2) 写提示词库（模拟 /codex/prompts 保存）
+    state = store.readState();
+    state.promptLibrary = [{ id: 'p1', title: '测试', text: '你好' }];
+    store.writeState(state);
+
+    // 3) 写任务置顶（模拟 /codex/thread-action）
+    state = store.readState();
+    store.writeState(state);
+
+    const onDisk = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    assert.equal(onDisk.webhook, 'https://example.com/hook', 'webhook 未被提示词库写入覆盖');
+    assert.equal(onDisk.webhookSecret, 'a'.repeat(64), 'webhook 密钥未丢失');
+    assert.equal(onDisk.promptLibrary.length, 1, '提示词库未丢失');
+    assert.equal(onDisk.promptLibrary[0].title, '测试');
+  } finally {
+    store.invalidateCache();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Store: 写入后字段集恒定，不因调用方缺字段而收缩', () => {
+  const { store, dir } = makeTempStore();
+  const stateFile = path.join(dir, 'state.json');
+  const expected = [
+    'archivedThreadIds',
+    'guiFailureReports',
+    'pinnedThreadIds',
+    'promptLibrary',
+    'scheduledTasks',
+    'titleOverrides',
+    'webhook',
+    'webhookSecret',
+  ];
+  try {
+    // 只提交一个字段，其余必须保留结构
+    store.writeState({ webhook: 'https://example.com/hook' });
+    const keys = Object.keys(JSON.parse(fs.readFileSync(stateFile, 'utf8'))).sort();
+    assert.deepEqual(keys, expected, 'state.json 字段集必须恒定');
+  } finally {
+    store.invalidateCache();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 
 test('Store: webhook SSRF 防护 - 环回/元数据/内网域名地址被拒绝', () => {
   const { store, dir } = makeTempStore();

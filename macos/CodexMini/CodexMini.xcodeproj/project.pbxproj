@@ -296,7 +296,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 4.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "local.codex-mini.app";
 				PRODUCT_NAME = "Codex Remote Bridge";
 				SWIFT_VERSION = 5.0;
@@ -321,7 +321,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 4.0.0;
+				MARKETING_VERSION = 4.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "local.codex-mini.app";
 				PRODUCT_NAME = "Codex Remote Bridge";
 				SWIFT_VERSION = 5.0;

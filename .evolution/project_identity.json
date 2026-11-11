@@ -1,0 +1,25 @@
+{
+  "projectName": "Codex Remote Bridge",
+  "projectRoot": "E:\\移动云盘同步盘\\Codex-Remote-Bridge",
+  "repository": "https://github.com/yuchen0x1/Codex-Remote-Bridge.git",
+  "branch": "upgrade/p0-p1-hardening",
+  "head": "6571451",
+  "workingTree": "has pre-existing and current uncommitted changes; preserved in place",
+  "taskId": "evolution-2026-11-12-codex-remote-bridge",
+  "mode": "single-project",
+  "projectType": ["cross-platform application", "AI developer tool", "LAN remote control", "web application", "Android application", "Windows desktop application", "macOS desktop application"],
+  "stack": {
+    "server": "Node.js 20+ with native HTTP/HTTPS",
+    "web": "static PWA in public/index.html",
+    "windows": "WPF/.NET",
+    "android": "Kotlin/Java, Jetpack Compose, WebView, WorkManager",
+    "macos": "SwiftUI/Swift"
+  },
+  "safety": {
+    "otherProjectsAccessed": false,
+    "globalEnvironmentChanged": false,
+    "remotePushed": false,
+    "userChangesPreserved": true
+  },
+  "identifiedAt": "2026-11-12"
+}

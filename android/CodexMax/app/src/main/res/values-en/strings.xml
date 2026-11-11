@@ -34,6 +34,7 @@
     <string name="connection_failed">Could not connect. Check the computer service and local network.</string>
     <string name="connection_timed_out">Connection timed out. Put the phone and computer on the same Wi-Fi, then scan again.</string>
     <string name="token_invalid">The token is invalid. Scan the computer QR code again.</string>
+    <string name="certificate_rejected">The computer certificate does not match the pinned fingerprint. Connection refused; please pair again.</string>
     <string name="http_error">The computer returned HTTP %1$d</string>
     <string name="webview_process_failed">Page rendering stopped. Please reconnect.</string>
     <string name="browser_error_title">Cannot connect to the computer</string>

@@ -13,7 +13,6 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -127,8 +126,9 @@ public final class CodexMonitorService extends Service {
         ConnectionUrl current = connection;
         if (current == null) return TaskStateTracker.Event.NONE;
 
-        HttpURLConnection connection = (HttpURLConnection) new URL(current.statusUrl())
-                .openConnection();
+        String pinned = new ConnectionStore(this).loadCertFingerprint();
+        HttpURLConnection connection = PinnedTls.openPinnedConnection(current.statusUrl(), pinned);
+        if (connection == null) return TaskStateTracker.Event.NONE;
         connection.setConnectTimeout(8_000);
         connection.setReadTimeout(8_000);
         connection.setRequestProperty("Cache-Control", "no-store");

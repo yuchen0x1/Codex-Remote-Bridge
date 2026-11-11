@@ -1,9 +1,11 @@
 {
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/server.test.js test/codex-app-server.test.js test/behavior.test.js test/tail-reader.test.js test/history.test.js test/download.test.js test/scope.test.js test/screenshot.test.js test/schedule-ui.test.js test/cdp-version.test.js",
-    "check": "node --check server.js && node --check src/store/index.js && node --check src/store/tail-reader.js && node --check src/security/index.js && node --check src/security/pairing.js && node --check src/security/sessions.js && node --check src/security/certs.js && node --check src/logger/index.js && node --check src/scheduler/index.js && node --check src/codex/session-parser.js && node --check src/routes/index.js && node --check src/store/queue.js && node --check src/scheduler/cron.js",
-    "start:http": "CODEX_MAX_HTTP_ONLY=1 node server.js"
+    "test": "node --test test/server.test.js test/codex-app-server.test.js test/behavior.test.js test/tail-reader.test.js test/history.test.js test/download.test.js test/scope.test.js test/screenshot.test.js test/schedule-ui.test.js test/cdp-version.test.js test/qrcode.test.js test/star-history.test.js",
+    "check": "node scripts/check-syntax.js",
+    "start:http": "CODEX_MAX_HTTP_ONLY=1 node server.js",
+    "star-history": "node scripts/star-history.js",
+    "star-history:offline": "node scripts/star-history.js --offline"
   },
   "dependencies": {},
   "devDependencies": {},

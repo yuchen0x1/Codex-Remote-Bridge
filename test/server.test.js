@@ -34,6 +34,46 @@ test('Cross-origin API requests retain token header compatibility', () => {
   assert.ok(html.includes("delete headers['x-mobile-typer-token']"), 'same-origin fetches prefer the HttpOnly session');
 });
 
+test('Front-end honors server rate limiting instead of retrying blindly', () => {
+  const html = require('fs').readFileSync('./public/index.html', 'utf8');
+  assert.ok(html.includes("response.status === 429"), '前端识别 429 响应');
+  assert.ok(html.includes("response.headers.get('retry-after')"), '前端读取 Retry-After 头');
+  assert.ok(html.includes('function rateLimitBackoffActive()'), '提供退避判断函数');
+  // 三个高频轮询器都必须尊重退避窗口，否则退避形同虚设
+  for (const poller of ['loadPendingApprovals', 'refreshThreadRuntimeStates', 'refreshCurrentThreadIfChanged', 'pollStatus']) {
+    const fnStart = html.indexOf(`function ${poller}(`);
+    assert.ok(fnStart > 0, `${poller} 存在`);
+    const fnHead = html.slice(fnStart, fnStart + 600);
+    assert.ok(fnHead.includes('rateLimitBackoffActive()'), `${poller} 轮询尊重退避窗口`);
+  }
+});
+
+test('配对二维码使用本地编码器，不依赖外部 CDN', () => {
+  const fs = require('fs');
+  const html = fs.readFileSync('./public/index.html', 'utf8');
+  // 页面 CSP 为 script-src 'self'，任何外部脚本都会被拦截（历史缺陷：二维码从未显示）
+  assert.ok(!/cdn\.jsdelivr|unpkg\.com|cdnjs\.cloudflare/.test(html), '不得引用外部 CDN 脚本');
+  assert.ok(html.includes('src="qrcode.js"'), '引入本地 qrcode.js');
+  assert.ok(html.includes('window.CodexQr'), '使用本地 CodexQr 渲染');
+  assert.ok(fs.existsSync('./public/qrcode.js'), '本地二维码编码器文件存在');
+});
+
+test('Mobile UI preserves browser zoom for accessible text resizing', () => {
+  const html = require('fs').readFileSync('./public/index.html', 'utf8');
+  const viewport = html.match(/<meta\s+name="viewport"\s+content="([^"]+)"/i)?.[1] || '';
+  assert.ok(viewport, 'viewport metadata exists');
+  assert.doesNotMatch(viewport, /user-scalable\s*=\s*no/i, 'viewport must not disable user scaling');
+  assert.doesNotMatch(viewport, /maximum-scale\s*=\s*(?:[0-1](?:\.\d+)?|1\.\d+)/i, 'viewport must permit at least 200% scaling');
+  assert.match(html, /touch-action:\s*pan-x\s+pan-y\s+pinch-zoom/i, 'root touch handling preserves pinch zoom');
+
+  // 回归：viewport 与 CSS 放开后，JS 仍可能用 preventDefault 禁掉手势。
+  // 4.1.0 曾出现「meta 已放开、JS 仍拦截」，导致缩放实际不可用而测试仍为绿。
+  const blockGestureHandlers = /addEventListener\(\s*['"]gesture(?:start|change|end)['"]\s*,\s*[^)]*preventDefault/i;
+  assert.doesNotMatch(html, blockGestureHandlers, '不得拦截 gesturestart/change/end');
+  const blockMultiTouchMove = /addEventListener\(\s*['"]touchmove['"][\s\S]{0,240}?touches\.length\s*>\s*1[\s\S]{0,120}?preventDefault/i;
+  assert.doesNotMatch(html, blockMultiTouchMove, '不得拦截多指 touchmove（会禁掉捏合缩放）');
+});
+
 test('All required route handlers are defined', () => {
   const src = require('fs').readFileSync('./server.js', 'utf8');
   const routes = [
@@ -54,16 +94,23 @@ test('All required route handlers are defined', () => {
 });
 
 test('Phase 1: Markdown export and prompt library handlers are defined', () => {
-  const src = require('fs').readFileSync('./server.js', 'utf8');
-  assert.ok(src.includes('function buildMarkdownExport'), 'buildMarkdownExport defined');
-  assert.ok(src.includes('function handleExport'), 'handleExport defined');
-  assert.ok(src.includes('function handlePromptLibrary'), 'handlePromptLibrary defined');
-  assert.ok(src.includes('function normalizePromptLibrary'), 'normalizePromptLibrary defined');
-  assert.ok(src.includes('MAX_PROMPT_LIBRARY_ITEMS'), 'prompt library capacity constant defined');
-  assert.ok(src.includes('Content-Disposition'), 'export response uses attachment disposition');
-  assert.ok(src.includes('text/markdown'), 'export response uses markdown content type');
-  assert.ok(src.includes("action === 'create'"), 'prompt library supports create');
-  assert.ok(src.includes("action === 'delete'"), 'prompt library supports delete');
+  // 行为断言（不再 grep server.js 源码）：模块可加载、能力可调用。
+  // 源码字符串断言会在函数迁移到 src/ 时误报，是模块化拆分长期回滚的根因。
+  const { normalizePromptLibrary, MAX_PROMPT_LIBRARY_ITEMS } = require('../src/store');
+  assert.equal(typeof normalizePromptLibrary, 'function', 'normalizePromptLibrary 可从 store 加载');
+  assert.equal(MAX_PROMPT_LIBRARY_ITEMS, 200, '提示词库容量上限为 200');
+
+  const normalized = normalizePromptLibrary([{ title: '  标题  ', text: ' 内容 ' }, { title: '', text: 'x' }]);
+  assert.equal(normalized.length, 1, '空标题条目被丢弃');
+  assert.equal(normalized[0].title, '标题', '标题被 trim');
+  assert.equal(normalized[0].text, '内容', '内容被 trim');
+  assert.ok(normalized[0].id, '自动生成 id');
+  assert.ok(normalized[0].createdAt > 0, '带创建时间');
+
+  const capped = normalizePromptLibrary(
+    Array.from({ length: MAX_PROMPT_LIBRARY_ITEMS + 20 }, (_, i) => ({ title: `t${i}`, text: 'x' })),
+  );
+  assert.equal(capped.length, MAX_PROMPT_LIBRARY_ITEMS, '超量条目被截断到上限');
 });
 
 test('Phase 1: Mobile UI includes voice input, TTS, export, and prompt library', () => {

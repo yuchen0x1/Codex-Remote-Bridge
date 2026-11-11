@@ -14,6 +14,7 @@ const STATE_FILE = path.join(STATE_DIR, 'state.json');
 const TOKEN_FILE = path.join(STATE_DIR, 'token');
 
 const GUI_FAILURE_REPORT_LIMIT = 80;
+const MAX_PROMPT_LIBRARY_ITEMS = 200;
 const SCHEDULED_TASK_LIMIT = 64;
 const SCHEDULED_TASK_MIN_INTERVAL_MINUTES = 5;
 const SCHEDULED_TASK_MAX_INTERVAL_MINUTES = 7 * 24 * 60;
@@ -100,6 +101,27 @@ function normalizeHistoryText(value) {
   return String(value || '').replace(/\r\n/g, '\n').trim();
 }
 
+function normalizePromptLibrary(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const title = String(item.title || '').trim().slice(0, 60);
+    const text = String(item.text || '').trim().slice(0, 4000);
+    if (!title || !text) continue;
+    const now = Date.now();
+    out.push({
+      id: String(item.id || '').slice(0, 64) || `p_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      title,
+      text,
+      createdAt: Number(item.createdAt) || now,
+      updatedAt: Number(item.updatedAt) || now,
+    });
+    if (out.length >= MAX_PROMPT_LIBRARY_ITEMS) break;
+  }
+  return out;
+}
+
 function normalizeWebhook(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -138,6 +160,7 @@ function emptyState() {
     titleOverrides: {},
     guiFailureReports: {},
     scheduledTasks: [],
+    promptLibrary: [],
     webhook: '',
     webhookSecret: '',
   };
@@ -209,6 +232,7 @@ class Store {
         titleOverrides: parsed.titleOverrides && typeof parsed.titleOverrides === 'object' ? parsed.titleOverrides : {},
         guiFailureReports: normalizeGuiFailureReports(parsed.guiFailureReports),
         scheduledTasks: normalizeScheduledTasks(parsed.scheduledTasks),
+        promptLibrary: normalizePromptLibrary(parsed.promptLibrary),
         webhook: normalizeWebhook(parsed.webhook),
         webhookSecret: normalizeWebhookSecret(parsed.webhookSecret),
       };
@@ -227,6 +251,7 @@ class Store {
       titleOverrides: state.titleOverrides && typeof state.titleOverrides === 'object' ? state.titleOverrides : {},
       guiFailureReports: normalizeGuiFailureReports(state.guiFailureReports),
       scheduledTasks: normalizeScheduledTasks(state.scheduledTasks),
+      promptLibrary: normalizePromptLibrary(state.promptLibrary),
       webhook: normalizeWebhook(state.webhook),
       webhookSecret: normalizeWebhookSecret(state.webhookSecret),
     };
@@ -267,4 +292,4 @@ class Store {
   }
 }
 
-module.exports = { Store, emptyState, isCodexThreadId, normalizeHistoryText, truncateText };
+module.exports = { Store, emptyState, isCodexThreadId, normalizeHistoryText, truncateText, normalizePromptLibrary, MAX_PROMPT_LIBRARY_ITEMS };

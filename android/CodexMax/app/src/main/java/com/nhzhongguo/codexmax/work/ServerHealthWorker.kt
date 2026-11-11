@@ -6,7 +6,9 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.nhzhongguo.codexmax.ConnectionStore
 import com.nhzhongguo.codexmax.ConnectionUrl
+import com.nhzhongguo.codexmax.PinnedTls
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
@@ -30,19 +32,25 @@ class ServerHealthWorker(
 
         val connection = parsed.value()
         val healthUrl = connection.origin() + "/codex/health?token=" + connection.token()
-        return try {
-            val http = URL(healthUrl).openConnection() as HttpURLConnection
-            http.connectTimeout = 5000
-            http.readTimeout = 5000
-            http.requestMethod = "GET"
-            val ok = http.responseCode in 200..299
-            http.disconnect()
-            saveResult(prefs, ok)
-            if (ok) Result.success() else Result.retry()
-        } catch (e: Exception) {
-            saveResult(prefs, false)
-            Result.retry()
+        // HTTPS + 自签名：必须用已固定指纹的 socket factory，默认信任库会直接握手失败。
+        val pinned = ConnectionStore(applicationContext).loadCertFingerprint()
+        val ok = if (connection.scheme() == "https") {
+            PinnedTls.probePinned(healthUrl, pinned)
+        } else {
+            try {
+                val http = URL(healthUrl).openConnection() as HttpURLConnection
+                http.connectTimeout = 5000
+                http.readTimeout = 5000
+                http.requestMethod = "GET"
+                val reachable = http.responseCode in 200..299
+                http.disconnect()
+                reachable
+            } catch (e: Exception) {
+                false
+            }
         }
+        saveResult(prefs, ok)
+        return if (ok) Result.success() else Result.retry()
     }
 
     private fun saveResult(prefs: android.content.SharedPreferences, ok: Boolean) {

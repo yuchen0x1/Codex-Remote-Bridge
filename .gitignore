@@ -36,3 +36,16 @@ macos/CodexMini/CodexMini/Resources/CodexMiniProject/bin/
 
 # macOS 构建脚本生成的内嵌服务副本（scripts/build-codex-mini-app.sh 构建时 rsync 刷新，勿手动提交）
 macos/CodexMini/CodexMini/Resources/CodexMiniProject/
+
+# Windows PowerShell 自动生成的模块分析缓存（非项目内容）
+Microsoft/
+
+# IDE / 编辑器本地配置
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+
+# 自主升级任务的过程记录（会话产物，不是项目内容）
+.autonomous-upgrade/

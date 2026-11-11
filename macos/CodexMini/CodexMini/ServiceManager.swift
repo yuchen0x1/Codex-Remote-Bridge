@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import SwiftUI
 
@@ -213,25 +214,61 @@ final class ServiceManager: ObservableObject {
             .replacingOccurrences(of: "=", with: "")
     }
 
+    /// 读取服务写出的 runtime.json（协议 + 证书指纹）。
+    /// 服务默认 HTTPS；壳层若继续假设 HTTP，健康检查会直接失败。
+    private struct RuntimeInfo: Decodable {
+        let `protocol`: String?
+        let tls: Bool?
+        let certFingerprint: String?
+        let port: Int?
+    }
+
+    private var runtimeInfoURL: URL {
+        fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex-max/runtime.json")
+    }
+
+    private func readRuntimeInfo() -> RuntimeInfo? {
+        guard let data = try? Data(contentsOf: runtimeInfoURL) else { return nil }
+        return try? JSONDecoder().decode(RuntimeInfo.self, from: data)
+    }
+
+    private var serviceScheme: String {
+        guard let info = readRuntimeInfo() else { return "https" }
+        return (info.protocol?.lowercased() == "http") ? "http" : "https"
+    }
+
+    /// 固定自签名证书指纹的 URLSession（TOFU）。
+    /// https 下用 default 会话会因证书不受信任而失败，必须以指纹为准。
+    private lazy var pinnedSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 4
+        return URLSession(configuration: config, delegate: PinnedCertDelegate(), delegateQueue: nil)
+    }()
+
+    private func sessionForService() -> URLSession {
+        serviceScheme == "http" ? URLSession.shared : pinnedSession
+    }
+
     private func localURLWithToken() -> String {
         let token = readTokenFromPlist() ?? generateToken()
-        return "http://localhost:\(port)/?token=\(token)"
+        return "\(serviceScheme)://localhost:\(port)/?token=\(token)"
     }
 
     private func checkHealth() async -> Bool {
         guard let token = readTokenFromPlist(),
-              let url = URL(string: "http://127.0.0.1:\(port)/codex/config?token=\(token)") else { return false }
+              let url = URL(string: "\(serviceScheme)://127.0.0.1:\(port)/codex/config?token=\(token)") else { return false }
         do {
-            let (_, response) = try await URLSession.shared.data(from: url)
+            let (_, response) = try await sessionForService().data(from: url)
             return (response as? HTTPURLResponse)?.statusCode == 200
         } catch { return false }
     }
 
     private func refreshThreads() async {
         guard let token = readTokenFromPlist(),
-              let url = URL(string: "http://127.0.0.1:\(port)/codex/threads?limit=20&token=\(token)") else { return }
+              let url = URL(string: "\(serviceScheme)://127.0.0.1:\(port)/codex/threads?limit=20&token=\(token)") else { return }
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await sessionForService().data(from: url)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return }
             let decoded = try JSONDecoder().decode(ThreadSummary.self, from: data)
             let rows = decoded.threads ?? []
@@ -302,5 +339,61 @@ private extension String {
               match.numberOfRanges > 1,
               let range = Range(match.range(at: 1), in: self) else { return nil }
         return String(self[range])
+    }
+}
+
+/// 自签名证书固定（TOFU）：只接受「环回主机 + 指纹等于 runtime.json 记录值」的证书。
+/// 服务默认 HTTPS，若用默认校验器，回环请求会因证书不受信任而全部失败。
+final class PinnedCertDelegate: NSObject, URLSessionDelegate {
+    private func expectedFingerprint() -> String? {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex-max/runtime.json")
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let value = object["certFingerprint"] as? String else { return nil }
+        return Self.normalize(value)
+    }
+
+    private static func normalize(_ value: String) -> String {
+        value.replacingOccurrences(of: ":", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+    }
+
+    private static func fingerprint(of certificate: SecCertificate) -> String {
+        let data = SecCertificateCopyData(certificate) as Data
+        // CryptoKit 无需桥接头即可在 Swift 中使用（CommonCrypto 需要 module map）
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02X", $0) }.joined()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        // 仅对环回目标做指纹固定
+        let host = challenge.protectionSpace.host
+        let isLoopback = host == "127.0.0.1" || host == "localhost" || host == "::1"
+        guard isLoopback else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        guard let expected = expectedFingerprint() else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
+              let leaf = chain.first,
+              Self.fingerprint(of: leaf) == expected else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
     }
 }

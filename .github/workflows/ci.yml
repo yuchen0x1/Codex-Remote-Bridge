@@ -70,4 +70,48 @@ jobs:
           path: android/CodexMax/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
+  # 桌面壳层编译门禁。v4.1.0 把默认传输改成 HTTPS，但 Windows/macOS 壳仍写死 http，
+  # 这个缺口正是因为没有壳层 CI 才漏到发布版，必须补上。
+  windows-launcher:
+    name: Windows launcher build
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: windows/CodexMini
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore CodexMiniWin.csproj
+
+      - name: Build
+        run: dotnet build CodexMiniWin.csproj -c Release --no-restore
+
+  macos-launcher:
+    name: macOS launcher build
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build (Release)
+        run: |
+          # 工程未提供共享 scheme，按 target 构建
+          xcodebuild \
+            -project macos/CodexMini/CodexMini.xcodeproj \
+            -target "Codex Remote Bridge" \
+            -configuration Release \
+            -derivedDataPath /tmp/codexmini-derived \
+            CODE_SIGNING_ALLOWED=NO \
+            build

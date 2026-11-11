@@ -5,7 +5,7 @@
  *
  * 设计说明（v4.0.0）：
  * - server.js 只负责构建 API 路由表（method + prefix + handler），本模块负责匹配分发。
- * - 前缀匹配（startsWith）语义与历史版本保持一致，避免行为变化。
+ * - 前缀路由按路径段边界匹配，避免把 `/codex/healthfoo` 误判为健康检查。
  * - 静态文件、OPTIONS、token cookie 等由 server.js 通过 staticHandler 委托，避免重复实现。
  */
 
@@ -25,13 +25,14 @@ function resolveStaticFilePath(rootDir, pathname) {
 }
 
 // Helpers
-function json(res, status, body) {
+function json(res, status, body, extraHeaders = {}) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     ...(res._corsHeaders || {}),
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(payload),
     'Cache-Control': 'no-store',
+    ...extraHeaders,
   });
   res.end(payload);
 }
@@ -146,7 +147,7 @@ class Router {
     this.security = options.security;
     // 精确/正则路由（保留通用匹配能力）
     this.routes = [];
-    // 前缀路由（与历史 startsWith 语义一致，是 server.js 主要使用的形式）
+    // 前缀路由（server.js API 表主要使用的形式）
     this.prefixRoutes = [];
     // 静态文件处理器（由 server.js 委托，保留 token cookie / HEAD 等行为）
     this.staticHandler = options.staticHandler || null;
@@ -195,7 +196,7 @@ class Router {
   _matchPrefix(method, pathname) {
     for (const route of this.prefixRoutes) {
       if (route.method !== '*' && route.method !== method) continue;
-      if (pathname.startsWith(route.prefix)) return route.handler;
+      if (pathname === route.prefix || pathname.startsWith(`${route.prefix}/`)) return route.handler;
     }
     return null;
   }
@@ -212,12 +213,42 @@ class Router {
       return json(res, 400, { ok: false, code: 'BAD_URL', message: '请求地址不正确。' });
     }
 
-    // 限流（健康检查豁免，与历史行为一致；IP + token 双维度）
-    if (pathname !== '/codex/health' && this.security) {
-      const ip = getClientIp(req);
-      if (!this.security.rateLimitCheck(ip, getTokenFromRequest(req))) {
-        this.logger.warn('rate_limited', { ip, path: pathname });
-        return json(res, 429, { ok: false, code: 'RATE_LIMITED', message: '请求过于频繁，请稍后再试。' });
+    // 限流：静态资源不参与；健康检查豁免；按 read/write/anon 分档连续补充。
+    if (this.security) {
+      const presentedToken = getTokenFromRequest(req);
+      const authorized = Boolean(presentedToken) && typeof this.security.isAuthorized === 'function'
+        ? this.security.isAuthorized(req)
+        : Boolean(presentedToken);
+      let kind = 'api';
+      if (typeof this.security.rateLimitClass === 'function') {
+        kind = this.security.rateLimitClass(req, pathname, authorized);
+      }
+      const isHealth = pathname === '/codex/health';
+      if (kind !== 'static' && !isHealth) {
+        const ip = getClientIp(req);
+        const verdict = this.security.rateLimitCheck(ip, presentedToken, kind);
+        if (!verdict.allowed) {
+          this.logger.warn('rate_limited', { ip, path: pathname, kind });
+          const retryAfter = String(verdict.retryAfterSeconds || 1);
+          return json(res, 429, {
+            ok: false,
+            code: 'RATE_LIMITED',
+            kind,
+            retryAfterSeconds: Number(retryAfter),
+            message: `请求过于频繁，请 ${retryAfter} 秒后重试。`,
+          }, {
+            'retry-after': retryAfter,
+            'x-ratelimit-limit': String(verdict.limit || 0),
+            'x-ratelimit-remaining': '0',
+          });
+        }
+        // 未触发限制时也回传剩余额度，便于前端自适应降速
+        if (res && typeof res.setHeader === 'function' && !res.headersSent) {
+          try {
+            res.setHeader('x-ratelimit-limit', String(verdict.limit || 0));
+            res.setHeader('x-ratelimit-remaining', String(verdict.remaining || 0));
+          } catch {}
+        }
       }
     }
 

@@ -6,6 +6,13 @@
 - Chore: update package metadata, documentation, PWA metadata, build outputs, and installer names
 - Compatibility: preserve legacy ChatGPT Win/Codex Max configuration paths, installer lookup, and web route aliases
 
+# 4.1.0 (2026-11-08)
+
+- Security: HTTPS is now the default transport with automatically managed local certificates.
+- Security: webhook notifications use HMAC-SHA256 signatures and reject private-network targets by default.
+- Fix: route prefixes now respect path-segment boundaries and no longer misroute names such as `/codex/healthfoo`.
+- Chore: synchronize Windows, macOS, Android, and service version metadata to 4.1.0.
+
 # 4.0.0 (2026-08-02)
 
 - Feat: 路由分发中枢 - server.js 的 if 链替换为 Router 模块（精确/前缀/静态/405 统一分发）

@@ -56,7 +56,90 @@ internal sealed class ServiceManager
         WriteIndented = true
     };
 
-    private readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(2) };
+    // 注意：不再持有全局 HttpClient。服务默认 HTTPS，所有回环请求都必须走
+    // CreateServiceHttpClient(config, ...) 以按当前协议与已固定指纹创建客户端。
+
+    /// <summary>
+    /// 创建固定自签名证书指纹的 HttpClient（TOFU）。
+    /// 服务默认走 HTTPS，若继续用默认校验器，回环请求会因证书不受信任而全部失败。
+    /// 只接受「主机名为环回地址」且「叶子证书 SHA-256 指纹等于已固定值」的连接。
+    /// </summary>
+    private static HttpClient CreatePinnedHttpClient(TimeSpan timeout, string pinnedFingerprint)
+    {
+        var handler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) =>
+            {
+                if (certificate is null) return false;
+                // 仅对环回目标做固定校验
+                var requestHost = message?.RequestUri?.Host ?? "";
+                if (!IPAddress.TryParse(requestHost, out var parsed) || !IPAddress.IsLoopback(parsed))
+                {
+                    return errors == System.Net.Security.SslPolicyErrors.None;
+                }
+                if (string.IsNullOrWhiteSpace(pinnedFingerprint)) return false;
+                using var sha = SHA256.Create();
+                var actual = Convert.ToHexString(sha.ComputeHash(certificate.GetRawCertData()));
+                var expected = pinnedFingerprint.Replace(":", "", StringComparison.Ordinal).Trim();
+                return string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
+            },
+        };
+        return new HttpClient(handler) { Timeout = timeout };
+    }
+
+    /// <summary>按当前配置协议创建一个校验策略匹配的 HttpClient（https 走指纹固定，http 直连）。</summary>
+    private static HttpClient CreateServiceHttpClient(LauncherConfig config, TimeSpan timeout)
+    {
+        if (ServiceScheme(config) == "http") return new HttpClient { Timeout = timeout };
+        return CreatePinnedHttpClient(timeout, config.CertFingerprint);
+    }
+
+    /// <summary>
+    /// 首次连接引导（TOFU）：尚未固定指纹时，只对环回地址接受服务端证书，
+    /// 并把「实际握收到的叶子证书指纹」与「服务在 /codex/health 中自报的指纹」交叉校验。
+    /// 两者一致才写回配置，之后所有请求都走严格固定校验。
+    /// 环回地址上不存在中间人，因此这一步是安全的；写入后即不再接受任何其他证书。
+    /// </summary>
+    private static async Task<bool> EnsureFingerprintPinnedAsync(LauncherConfig config)
+    {
+        if (ServiceScheme(config) == "http") return true;
+        if (!string.IsNullOrWhiteSpace(config.CertFingerprint)) return true;
+
+        string? observed = null;
+        using (var captureHandler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = (message, certificate, chain, errors) =>
+            {
+                var requestHost = message?.RequestUri?.Host ?? "";
+                if (!IPAddress.TryParse(requestHost, out var parsed) || !IPAddress.IsLoopback(parsed)) return false;
+                if (certificate is null) return false;
+                using var sha = SHA256.Create();
+                observed = Convert.ToHexString(sha.ComputeHash(certificate.GetRawCertData()));
+                return true;
+            },
+        })
+        using (var capture = new HttpClient(captureHandler) { Timeout = TimeSpan.FromSeconds(3) })
+        {
+            try
+            {
+                var uri = BuildLoopbackServiceUri(config, "/codex/health");
+                using var response = await capture.GetAsync(uri);
+                if (!response.IsSuccessStatusCode) return false;
+                var payload = await response.Content.ReadFromJsonAsync<HealthResponse>(JsonOptions);
+                var reported = (payload?.CertFingerprint ?? "").Replace(":", "", StringComparison.Ordinal).Trim();
+                if (string.IsNullOrWhiteSpace(observed) || string.IsNullOrWhiteSpace(reported)) return false;
+                // 交叉校验：握收到的证书必须就是服务自报的那张
+                if (!string.Equals(observed, reported, StringComparison.OrdinalIgnoreCase)) return false;
+                config.CertFingerprint = reported;
+                config.Protocol = "https";
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
     private readonly string appDataDir;
     private readonly string[] legacyAppDataDirs;
     private readonly string logsDir;
@@ -190,11 +273,19 @@ internal sealed class ServiceManager
         _ = Task.Run(() => AppendProcessOutputAsync(process.StandardError, stderrPath));
         config.Pid = process.Id;
         config.ServiceStamp = serviceStamp;
+        // 新进程可能因证书重签产生新指纹，先清空再重新固定
+        config.CertFingerprint = "";
         WriteConfig(config);
 
         for (var i = 0; i < 24; i++)
         {
             await Task.Delay(250);
+            // HTTPS 模式下先完成 TOFU 指纹固定，再走严格校验的健康检查
+            if (!await EnsureFingerprintPinnedAsync(config))
+            {
+                continue;
+            }
+            WriteConfig(config);
             if (await CheckHealthAsync(config)) return;
         }
 
@@ -295,12 +386,17 @@ internal sealed class ServiceManager
     {
         var config = ReadConfig();
         var token = Uri.EscapeDataString(config.Token);
-        yield return $"http://localhost:{config.Port}/?token={token}";
+        var scheme = ServiceScheme(config);
+        yield return $"{scheme}://localhost:{config.Port}/?token={token}";
         foreach (var address in LanAddresses())
         {
-            yield return $"http://{address}:{config.Port}/?token={token}";
+            yield return $"{scheme}://{address}:{config.Port}/?token={token}";
         }
     }
+
+    /// <summary>服务协议：默认 https，仅当配置显式记录为 http（HTTP_ONLY 模式）时降级。</summary>
+    private static string ServiceScheme(LauncherConfig config) =>
+        string.Equals(config.Protocol, "http", StringComparison.OrdinalIgnoreCase) ? "http" : "https";
 
     private static Uri BuildLoopbackServiceUri(LauncherConfig config, string path, IReadOnlyDictionary<string, string?>? query = null)
     {
@@ -309,7 +405,8 @@ internal sealed class ServiceManager
             throw new InvalidOperationException("本地服务端口无效。");
         }
 
-        var builder = new UriBuilder(Uri.UriSchemeHttp, IPAddress.Loopback.ToString(), config.Port, NormalizeHttpPath(path));
+        var scheme = ServiceScheme(config) == "http" ? Uri.UriSchemeHttp : Uri.UriSchemeHttps;
+        var builder = new UriBuilder(scheme, IPAddress.Loopback.ToString(), config.Port, NormalizeHttpPath(path));
         if (query is not null && query.Count > 0)
         {
             builder.Query = string.Join("&", query
@@ -321,9 +418,10 @@ internal sealed class ServiceManager
 
     private static Uri ValidateLoopbackHttpUri(Uri uri)
     {
-        if (!uri.IsAbsoluteUri || uri.Scheme != Uri.UriSchemeHttp)
+        if (!uri.IsAbsoluteUri ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
         {
-            throw new InvalidOperationException("本地服务 URL 必须使用 http。");
+            throw new InvalidOperationException("本地服务 URL 必须使用 http 或 https。");
         }
         if (!IPAddress.TryParse(uri.Host, out var host) || !IPAddress.IsLoopback(host))
         {
@@ -440,7 +538,8 @@ internal sealed class ServiceManager
             {
                 ["token"] = config.Token
             });
-            using var response = await http.GetAsync(uri);
+            using var client = CreateServiceHttpClient(config, TimeSpan.FromSeconds(2));
+            using var response = await client.GetAsync(uri);
             if (!response.IsSuccessStatusCode) return null;
             var payload = await response.Content.ReadFromJsonAsync<ClientConfigResponse>(JsonOptions);
             var update = payload?.Update;
@@ -489,8 +588,9 @@ internal sealed class ServiceManager
     {
         try
         {
+            using var client = CreateServiceHttpClient(config, TimeSpan.FromSeconds(2));
             // /codex/health 不校验 token，健康状态必须走需鉴权的 /codex/config
-            using var response = await http.GetAsync(BuildLoopbackServiceUri(config, "/codex/config", new Dictionary<string, string?>
+            using var response = await client.GetAsync(BuildLoopbackServiceUri(config, "/codex/config", new Dictionary<string, string?>
             {
                 ["token"] = config.Token
             }));
@@ -500,7 +600,7 @@ internal sealed class ServiceManager
             var controlMode = "";
             try
             {
-                using var healthResponse = await http.GetAsync(BuildLoopbackServiceUri(config, "/codex/health"));
+                using var healthResponse = await client.GetAsync(BuildLoopbackServiceUri(config, "/codex/health"));
                 var health = await healthResponse.Content.ReadFromJsonAsync<HealthResponse>(JsonOptions);
                 controlMode = health?.ControlMode ?? "";
             }
@@ -519,7 +619,8 @@ internal sealed class ServiceManager
     {
         try
         {
-            var summary = await http.GetFromJsonAsync<ThreadSummary>(BuildLoopbackServiceUri(config, "/codex/threads", new Dictionary<string, string?>
+            using var client = CreateServiceHttpClient(config, TimeSpan.FromSeconds(2));
+            var summary = await client.GetFromJsonAsync<ThreadSummary>(BuildLoopbackServiceUri(config, "/codex/threads", new Dictionary<string, string?>
             {
                 ["limit"] = "20",
                 ["token"] = config.Token
@@ -544,6 +645,7 @@ internal sealed class ServiceManager
                 if (loaded is not null && !string.IsNullOrWhiteSpace(loaded.Token))
                 {
                     if (loaded.Port <= 0) loaded.Port = DefaultPort;
+                    ApplyRuntimeInfo(loaded);
                     return loaded;
                 }
             }
@@ -555,10 +657,36 @@ internal sealed class ServiceManager
         if (!string.IsNullOrWhiteSpace(persistedToken))
         {
             var config = new LauncherConfig { Token = persistedToken, Port = DefaultPort };
+            ApplyRuntimeInfo(config);
             WriteConfig(config);
             return config;
         }
         return new LauncherConfig { Token = GenerateToken(), Port = DefaultPort };
+    }
+
+    /// <summary>
+    /// 用服务进程写出的 runtime.json 覆盖协议与证书指纹。
+    /// 服务是协议的唯一权威（它决定 https 还是 http，并持有当前证书），
+    /// 壳层不能自行假设；否则换了协议或证书重签后壳层会一直连不上。
+    /// </summary>
+    private void ApplyRuntimeInfo(LauncherConfig config)
+    {
+        try
+        {
+            var runtimeFile = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex-max", "runtime.json");
+            if (!File.Exists(runtimeFile)) return;
+            var runtime = JsonSerializer.Deserialize<RuntimeInfo>(File.ReadAllText(runtimeFile), JsonOptions);
+            if (runtime is null) return;
+            config.Protocol = string.Equals(runtime.Protocol, "http", StringComparison.OrdinalIgnoreCase) ? "http" : "https";
+            if (!string.IsNullOrWhiteSpace(runtime.CertFingerprint))
+            {
+                config.CertFingerprint = runtime.CertFingerprint;
+            }
+        }
+        catch
+        {
+        }
     }
 
     private void WriteConfig(LauncherConfig config)
@@ -1014,6 +1142,28 @@ internal sealed class ServiceManager
         public int Port { get; set; } = DefaultPort;
         public int Pid { get; set; }
         public string ServiceStamp { get; set; } = "";
+
+        /// <summary>服务当前协议：https（默认）或 http（显式 CODEX_MAX_HTTP_ONLY=1）。</summary>
+        public string Protocol { get; set; } = "https";
+
+        /// <summary>自签名证书 SHA-256 指纹（TOFU 固定）。协议为 https 时必须匹配。</summary>
+        public string CertFingerprint { get; set; } = "";
+    }
+
+    /// <summary>服务进程写出的 ~/.codex-max/runtime.json。</summary>
+    private sealed class RuntimeInfo
+    {
+        [JsonPropertyName("protocol")]
+        public string? Protocol { get; set; }
+
+        [JsonPropertyName("tls")]
+        public bool Tls { get; set; }
+
+        [JsonPropertyName("certFingerprint")]
+        public string? CertFingerprint { get; set; }
+
+        [JsonPropertyName("port")]
+        public int Port { get; set; }
     }
 
     private sealed class ThreadSummary
@@ -1038,6 +1188,12 @@ internal sealed class ServiceManager
 
         [JsonPropertyName("controlMode")]
         public string? ControlMode { get; set; }
+
+        [JsonPropertyName("protocol")]
+        public string? Protocol { get; set; }
+
+        [JsonPropertyName("certFingerprint")]
+        public string? CertFingerprint { get; set; }
     }
 
     private sealed class CdpLaunchResponse

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=overlays-content" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
   <meta name="theme-color" content="#000000" />
   <meta name="application-name" content="Codex Remote Bridge" />
   <meta name="apple-mobile-web-app-title" content="Codex Remote Bridge" />
@@ -104,7 +104,7 @@
       opacity: .92;
     }
     button:active, a:active, [role="button"]:active { transform: scale(.985); }
-    html, body { width: 100%; min-height: 100%; height: 100%; background: var(--topbar-bg); touch-action: pan-x pan-y; overflow: hidden; overscroll-behavior: none; }
+    html, body { width: 100%; min-height: 100%; height: 100%; background: var(--topbar-bg); touch-action: pan-x pan-y pinch-zoom; overflow: hidden; overscroll-behavior: none; }
     body { position: fixed; inset: 0; margin: 0; color: var(--text); overflow: hidden; overscroll-behavior: none; }
 
     .app {
@@ -4872,6 +4872,8 @@
       </div>
     </div>
 
+  <!-- 本地二维码编码器（零依赖，符合 CSP script-src 'self' 与离线使用定位） -->
+  <script src="qrcode.js"></script>
   <script>
     // PWA 离线缓存（网络优先，失败回退缓存）
     if ('serviceWorker' in navigator) {
@@ -5560,22 +5562,26 @@
       })() : location.href;
     }
     function renderPairingQr(qrBox, address) {
-      if (window.QRCode) {
-        qrBox.innerHTML = '';
-        try {
-          new QRCode(qrBox, { text: address, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
-          return true;
-        } catch (e) {
-          qrBox.textContent = '二维码生成失败，请使用下方地址';
-          return false;
-        }
+      if (!qrBox) return false;
+      // 本地内置编码器（public/qrcode.js）：页面 CSP 是 script-src 'self'，
+      // 旧实现从 CDN 动态加载脚本会被直接拦截，二维码从来没能显示过。
+      if (!window.CodexQr) {
+        qrBox.textContent = '二维码模块加载失败，请复制下方地址';
+        return false;
       }
-      const lib = document.createElement('script');
-      lib.src = 'https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js';
-      lib.onload = () => openPairingQrModal();
-      lib.onerror = () => { qrBox.textContent = '二维码库加载失败（离线环境），请复制下方地址'; };
-      document.head.appendChild(lib);
-      return false;
+      try {
+        const rendered = window.CodexQr.render(qrBox, address, {
+          quietZone: 3,
+          dark: '#000000',
+          light: '#ffffff',
+          label: '配对二维码',
+        });
+        if (!rendered) throw new Error('render returned false');
+        return true;
+      } catch (error) {
+        qrBox.textContent = '二维码生成失败（地址过长），请复制下方地址';
+        return false;
+      }
     }
     async function pairingAddressCandidate() {
       // 优先申请一次性配对码：新设备扫码后用 ?pair= 兑换 HttpOnly 会话，URL 不再携带长期令牌
@@ -5885,17 +5891,20 @@
       el._sourceMarkdown = source;
       el.innerHTML = markdownToHtml(source);
     }
+    // 只抑制「双击缩放」（连点按钮时误触放大），不再拦截双指捏合缩放。
+    // 历史实现额外阻止了 gesturestart/gesturechange 与多指 touchmove，
+    // 使 4.1.0 的 viewport 放开形同虚设——移动端实际无法放大阅读。
     function lockViewportZoom() {
       let lastTouchEndAt = 0;
-      document.addEventListener('gesturestart', event => event.preventDefault(), { passive: false });
-      document.addEventListener('gesturechange', event => event.preventDefault(), { passive: false });
-      document.addEventListener('gestureend', event => event.preventDefault(), { passive: false });
-      document.addEventListener('touchmove', event => {
-        if (event.touches && event.touches.length > 1) event.preventDefault();
-      }, { passive: false });
       document.addEventListener('touchend', event => {
+        if (event.touches && event.touches.length > 0) return; // 仍在多指手势中
         const now = Date.now();
-        if (now - lastTouchEndAt <= 300) event.preventDefault();
+        if (now - lastTouchEndAt <= 300) {
+          // 只在非输入控件上抑制双击，避免文本选择/输入受干扰
+          const target = event.target;
+          const isEditable = target && (target.closest?.('input, textarea, [contenteditable="true"]'));
+          if (!isEditable) event.preventDefault();
+        }
         lastTouchEndAt = now;
       }, { passive: false });
     }
@@ -6211,7 +6220,7 @@
       if (changed) approvalDetails.scrollTop = 0;
     }
     async function loadPendingApprovals(options = {}) {
-      if (!token || approvalRefreshBusy) return;
+      if (!token || approvalRefreshBusy || rateLimitBackoffActive()) return;
       approvalRefreshBusy = true;
       try {
         const params = new URLSearchParams({ token });
@@ -6850,14 +6859,36 @@
           const retryHeaders = { ...(requestOptions.headers || {}), 'x-mobile-typer-token': token };
           return fetchWithTimeout(apiUrl(strippedPath), { ...requestOptions, headers: retryHeaders }, timeoutMs);
         }
-        return response;
+        return noteRateLimit(response);
       }
       if (token) {
         const headers = { ...(requestOptions.headers || {}) };
         if (!headers['x-mobile-typer-token']) headers['x-mobile-typer-token'] = token;
         requestOptions.headers = headers;
       }
-      return fetchWithTimeout(targetUrl, requestOptions, timeoutMs);
+      return noteRateLimit(await fetchWithTimeout(targetUrl, requestOptions, timeoutMs));
+    }
+
+    // 服务端返回 429 时记录退避截止时间，并给用户可见提示（而不是静默失败）。
+    let rateLimitResumeAt = 0;
+    let rateLimitNoticeShown = false;
+    function noteRateLimit(response) {
+      if (response && response.status === 429) {
+        const retryAfter = Math.max(1, Number(response.headers.get('retry-after')) || 5);
+        rateLimitResumeAt = Date.now() + retryAfter * 1000;
+        if (!rateLimitNoticeShown) {
+          rateLimitNoticeShown = true;
+          setNotice(`请求过于频繁，已自动降速（${retryAfter} 秒后恢复）`, 'error');
+          window.setTimeout(() => { rateLimitNoticeShown = false; }, retryAfter * 1000);
+        }
+      } else if (response && response.ok) {
+        rateLimitResumeAt = 0;
+      }
+      return response;
+    }
+    // 轮询器统一调用：仍在退避窗口内就跳过本轮，避免持续打 429。
+    function rateLimitBackoffActive() {
+      return Date.now() < rateLimitResumeAt;
     }
 
     function environmentIcon(kind) {
@@ -11231,6 +11262,7 @@ function stopPolling() {
 
     async function pollStatus(watch, generation = pollGeneration) {
       if (generation !== pollGeneration) return;
+      if (rateLimitBackoffActive()) return; // 服务端要求降速：本轮跳过，下个 tick 再试
       if (!watch || !activeAssistant) return stopPolling();
       pollAttempts += 1;
       const params = new URLSearchParams({ token, since: watch.since || '', thread: watch.threadId || selectedThreadId || '' });
@@ -11333,7 +11365,7 @@ function stopPolling() {
     }
 
     async function refreshCurrentThreadIfChanged() {
-      if (!selectedThreadId || activeAssistant || autoRefreshBusy || document.hidden) return;
+      if (!selectedThreadId || activeAssistant || autoRefreshBusy || document.hidden || rateLimitBackoffActive()) return;
       autoRefreshBusy = true;
       let dotStarted = false;
       const threadId = selectedThreadId;
@@ -11372,7 +11404,7 @@ function stopPolling() {
     }
 
     async function refreshThreadRuntimeStates(options = {}) {
-      if (threadStateBusy || document.hidden) return;
+      if (threadStateBusy || document.hidden || rateLimitBackoffActive()) return;
       threadStateBusy = true;
       try {
         await loadThreads({ detectTransitions: options.detectTransitions !== false, renderMenu: 'ifChanged' });

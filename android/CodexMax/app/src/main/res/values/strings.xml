@@ -34,6 +34,7 @@
     <string name="connection_failed">连接失败，请检查电脑端服务和局域网</string>
     <string name="connection_timed_out">连接超时，请确认手机和电脑在同一个 Wi‑Fi，然后重新扫码</string>
     <string name="token_invalid">token 无效，请重新扫描电脑端二维码</string>
+    <string name="certificate_rejected">电脑端证书与配对时固定的指纹不一致，已拒绝连接。请重新扫码配对。</string>
     <string name="http_error">电脑端返回 HTTP %1$d</string>
     <string name="webview_process_failed">页面渲染已中断，请重新连接</string>
     <string name="browser_error_title">无法连接电脑端</string>

@@ -382,71 +382,25 @@ function findModelOption(id = '') {
   return readModelCatalogOptions().find(item => item.id === targetId || item.key === targetId) || null;
 }
 
+// 状态读写统一委托 Store：单写入者、字段集恒定、写入原子化。
+// 迁移说明：旧实现直接读写 state.json，且字段集不含 webhook/webhookSecret，
+// 与 Store 互相覆盖曾导致提示词库或 Webhook 密钥静默丢失。
 function emptyCodexMiniState() {
-  return {
-    pinnedThreadIds: [],
-    archivedThreadIds: [],
-    titleOverrides: {},
-    guiFailureReports: {},
-    scheduledTasks: [],
-    promptLibrary: [],
-  };
+  return store.readState();
 }
 
 function readCodexMiniState() {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    return {
-      pinnedThreadIds: Array.isArray(parsed.pinnedThreadIds) ? parsed.pinnedThreadIds.filter(isCodexThreadId) : [],
-      archivedThreadIds: Array.isArray(parsed.archivedThreadIds) ? parsed.archivedThreadIds.filter(isCodexThreadId) : [],
-      titleOverrides: parsed.titleOverrides && typeof parsed.titleOverrides === 'object' ? parsed.titleOverrides : {},
-      guiFailureReports: normalizeGuiFailureReports(parsed.guiFailureReports),
-      scheduledTasks: normalizeScheduledTasks(parsed.scheduledTasks),
-      promptLibrary: normalizePromptLibrary(parsed.promptLibrary),
-    };
-  } catch {
-    return emptyCodexMiniState();
-  }
+  return store.readState();
 }
 
 function writeCodexMiniState(state) {
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  const normalized = {
-    pinnedThreadIds: [...new Set((state.pinnedThreadIds || []).filter(isCodexThreadId))],
-    archivedThreadIds: [...new Set((state.archivedThreadIds || []).filter(isCodexThreadId))],
-    titleOverrides: state.titleOverrides && typeof state.titleOverrides === 'object' ? state.titleOverrides : {},
-    guiFailureReports: normalizeGuiFailureReports(state.guiFailureReports),
-    scheduledTasks: normalizeScheduledTasks(state.scheduledTasks),
-    promptLibrary: normalizePromptLibrary(state.promptLibrary),
-  };
-  fs.writeFileSync(STATE_FILE, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8');
+  const saved = store.writeState(state);
   invalidateCodexThreadListCache();
-  return normalized;
+  return saved;
 }
-
-
 
 const MAX_PROMPT_LIBRARY_ITEMS = 200;
-function normalizePromptLibrary(value) {
-  if (!Array.isArray(value)) return [];
-  const out = [];
-  for (const item of value) {
-    if (!item || typeof item !== 'object') continue;
-    const title = String(item.title || '').trim().slice(0, 60);
-    const text = String(item.text || '').trim().slice(0, 4000);
-    if (!title || !text) continue;
-    const now = Date.now();
-    out.push({
-      id: String(item.id || '').slice(0, 64) || `p_${now.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-      title,
-      text,
-      createdAt: Number(item.createdAt) || now,
-      updatedAt: Number(item.updatedAt) || now,
-    });
-    if (out.length >= MAX_PROMPT_LIBRARY_ITEMS) break;
-  }
-  return out;
-}
+// normalizePromptLibrary 已迁移到 src/store（状态规范化必须与写入者同源）
 function normalizeGuiFailureReports(value) {
   const out = {};
   if (!value || typeof value !== 'object') return out;
@@ -4852,16 +4806,48 @@ function updateInfo() {
   };
 }
 
-function getLanApiBases() {
+/** 本机所有非内部 IPv4 地址（证书 SAN 与局域网 URL 的共同来源）。 */
+function getLanIPv4Addresses() {
   const nets = os.networkInterfaces();
-  const bases = new Set();
-  const scheme = LAN_PROTOCOL === 'https' ? 'https' : 'http';
+  const addresses = new Set();
   for (const entries of Object.values(nets)) {
     for (const net of entries || []) {
-      if (net.family === 'IPv4' && !net.internal) bases.add(`${scheme}://${net.address}:${PORT}`);
+      if (net.family === 'IPv4' && !net.internal) addresses.add(net.address);
     }
   }
-  return [...bases];
+  return [...addresses];
+}
+
+const RUNTIME_INFO_FILE = path.join(STATE_DIR, 'runtime.json');
+
+/**
+ * 写出运行时连接信息，供 Windows/macOS 壳读取协议与证书指纹。
+ * 内容不含 token：壳层自己有 token，这里只解决「服务到底起在 http 还是 https」与「该信任哪张证书」。
+ */
+function writeRuntimeInfo() {
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    const payload = {
+      protocol: LAN_PROTOCOL,
+      tls: Boolean(CERT_FINGERPRINT),
+      certFingerprint: CERT_FINGERPRINT || '',
+      port: PORT,
+      host: HOST,
+      version: SERVICE_VERSION,
+      lanAddresses: getLanIPv4Addresses(),
+      updatedAt: new Date().toISOString(),
+    };
+    const tempFile = `${RUNTIME_INFO_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tempFile, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(tempFile, RUNTIME_INFO_FILE);
+  } catch (error) {
+    logger.warn('runtime_info_write_failed', { error: error && error.message || String(error) });
+  }
+}
+
+function getLanApiBases() {
+  const scheme = LAN_PROTOCOL === 'https' ? 'https' : 'http';
+  return getLanIPv4Addresses().map(address => `${scheme}://${address}:${PORT}`);
 }
 
 async function handleClientConfig(req, res) {
@@ -4967,6 +4953,8 @@ async function handleHealth(req, res) {
     }
   }
   const mem = process.memoryUsage();
+  // 指纹与协议属于「连接引导」信息，未鉴权也返回：
+  // 桌面壳在拿到会话前就必须能固定自签名证书，否则 TLS 握手直接失败。
   const base = {
     ok: true,
     service: APP_NAME,
@@ -4975,6 +4963,10 @@ async function handleHealth(req, res) {
     platform: platform.name,
     now: new Date().toISOString(),
     uptime: Math.floor(process.uptime()),
+    protocol: LAN_PROTOCOL,
+    tls: Boolean(CERT_FINGERPRINT),
+    certFingerprint: CERT_FINGERPRINT || undefined,
+    lanAddresses: getLanIPv4Addresses(),
   };
   if (!authorized) {
     // 未鉴权请求只返回基础信息
@@ -5056,14 +5048,17 @@ async function handleKeepAwake(req, res) {
   }
 }
 
-function getLanUrls() {
+function getLanUrls(options = {}) {
   const nets = os.networkInterfaces();
   const scheme = LAN_PROTOCOL === 'https' ? 'https' : 'http';
-  const urls = new Set([`${scheme}://localhost:${PORT}/?token=${TOKEN}`]);
+  // includeToken=false 用于控制台横幅：长期 token 不应落进终端回滚缓冲与壳层日志。
+  const withToken = options.includeToken !== false;
+  const suffix = withToken ? `/?token=${TOKEN}` : '/';
+  const urls = new Set([`${scheme}://localhost:${PORT}${suffix}`]);
   for (const entries of Object.values(nets)) {
     for (const net of entries || []) {
       if (net.family === 'IPv4' && !net.internal) {
-        urls.add(`${scheme}://${net.address}:${PORT}/?token=${TOKEN}`);
+        urls.add(`${scheme}://${net.address}:${PORT}${suffix}`);
       }
     }
   }
@@ -5780,13 +5775,20 @@ const requestHandler = (req, res) => {
 };
 
 // HTTPS 证书管理
+// 证书 SAN 必须覆盖所有局域网 IPv4，否则手机通过局域网 IP 访问时证书名不匹配。
+// 指纹固定（TOFU）：桌面壳通过 /codex/health 获取指纹并锁定，用户无需手动信任证书。
 let server;
+let CERT_FINGERPRINT = '';
 if (USE_HTTPS) {
-  const certResult = certManager.ensureCert();
+  const certResult = certManager.ensureCert(['codex-max-local', ...getLanIPv4Addresses()]);
   if (certResult.ok) {
     LAN_PROTOCOL = 'https';
+    CERT_FINGERPRINT = certResult.fingerprint || certManager.getCertFingerprint();
     server = https.createServer(certManager.loadCredentials(), requestHandler);
-    logger.info('https_enabled', { fingerprint: certResult.fingerprint });
+    logger.info('https_enabled', {
+      fingerprint: CERT_FINGERPRINT,
+      reissuedFor: certResult.reissuedFor || undefined,
+    });
   } else {
     LAN_PROTOCOL = 'http';
     logger.warn('https_fallback', { reason: certResult.error });
@@ -5826,13 +5828,20 @@ server.listen(PORT, HOST, () => {
   startScheduledTaskRunner();
   cdpWsHub.start();
   mdnsBroadcaster.start();
-  const urls = getLanUrls();
+  // 写入运行时连接信息（协议 + 指纹），供桌面壳读取：
+  // 壳层在拿到本文件前不知道服务实际起在 https 还是 http，也无法固定自签证书。
+  writeRuntimeInfo();
+  // 横幅不打印长期 token：终端回滚缓冲与 Windows 壳的 service.out.log 都会长期留存。
+  // 新设备统一走网页端"配对"入口（一次性 6 位码）或桌面面板二维码。
+  const urls = getLanUrls({ includeToken: false });
   const protocol = LAN_PROTOCOL;
   logger.info('server_started', { port: PORT, host: HOST, protocol, version: SERVICE_VERSION, ws: true });
   console.log(`\n${APP_NAME} is running.`);
   console.log('Keep this terminal open, make sure Codex Desktop is available, then open one of these URLs on your phone:');
   for (const url of urls) console.log(`  ${url}`);
-  if (LAN_PROTOCOL === 'https') console.log('\nNote: Using HTTPS with self-signed certificate. You may need to accept the certificate warning on your phone.');
+  console.log('\nNew device? Open the URL above, then use the pairing entry (one-time 6-digit code) shown by the desktop panel.');
+  console.log('The long-lived access token is never printed here; it stays in the state directory and desktop launcher.');
+  if (LAN_PROTOCOL === 'https') console.log('\nNote: Using HTTPS with self-signed certificate. Desktop launchers pin the fingerprint automatically.');
   else console.log('\nNote: Running over plain HTTP (CODEX_MAX_HTTP_ONLY=1). On an untrusted LAN, prefer HTTPS.');
   console.log('\nTip: phone and this computer must be on the same Wi‑Fi/LAN. Press Ctrl+C to stop.\n');
 });

@@ -1,0 +1,14 @@
+{
+  "updatedAt": "2026-11-12",
+  "results": [
+    {"command": "npm test", "status": "PASSED", "evidence": "124 tests passed, 0 failed, 0 skipped"},
+    {"command": "npm run check", "status": "PASSED", "evidence": "syntax check passed for 24 files"},
+    {"command": "git diff --check", "status": "PASSED_AFTER_CLEANUP", "evidence": "removed trailing blank lines from .github/workflows/ci.yml; no remaining whitespace errors"},
+    {"command": ".\\gradlew.bat :app:testDebugUnitTest", "status": "BLOCKED", "evidence": "JAVA_HOME points to missing D:\\DevTools\\jdk21\\jdk-21.0.12.1+1; no usable java/javac found"},
+    {"command": ".\\gradlew.bat :app:assembleDebug", "status": "NOT_RUN", "evidence": "same missing JDK blocker"},
+    {"command": "dotnet build windows/CodexMini", "status": "NOT_RUN", "evidence": "no .NET SDK available in this environment"},
+    {"command": "xcodebuild macos/CodexMini", "status": "NOT_RUN", "evidence": "macOS/Xcode is unavailable on this host"},
+    {"command": "real device/browser UI test", "status": "NOT_RUN", "evidence": "no device acceptance was observed in this pass"}
+  ],
+  "limitations": ["Local success does not prove release packaging or external upload.", "Android TLS code was not compiled on this host because the required JDK is absent.", "Windows and macOS native shells require their respective CI runners."]
+}

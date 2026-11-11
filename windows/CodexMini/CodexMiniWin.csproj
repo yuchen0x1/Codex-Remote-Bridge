@@ -8,9 +8,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Codex Remote Bridge</AssemblyName>
     <RootNamespace>CodexMiniWin</RootNamespace>
-    <Version>4.0.0</Version>
-    <AssemblyVersion>4.0.0.0</AssemblyVersion>
-    <FileVersion>4.0.0.0</FileVersion>
+    <Version>4.1.0</Version>
+    <AssemblyVersion>4.1.0.0</AssemblyVersion>
+    <FileVersion>4.1.0.0</FileVersion>
     <ApplicationIcon>Assets\ChatGPTWin.ico</ApplicationIcon>
   </PropertyGroup>
 

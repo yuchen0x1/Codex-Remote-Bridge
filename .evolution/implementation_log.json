@@ -1,0 +1,8 @@
+{
+  "updatedAt": "2026-11-12",
+  "entries": [
+    {"id": "android-pinned-connection", "priority": "P1", "status": "COMPLETED_CODE_PENDING_BUILD", "files": ["android/CodexMax/app/src/main/java/com/nhzhongguo/codexmax/PinnedTls.java", "android/CodexMax/app/src/main/java/com/nhzhongguo/codexmax/CodexMonitorService.java", "android/CodexMax/app/src/main/java/com/nhzhongguo/codexmax/ui/state/ConnectionStateViewModel.kt"], "change": "Added reusable pinned HTTPS connection construction and routed monitor polling, foreground health checks, and update checks through it. Empty pins fail closed; HTTP remains compatible.", "verification": ["source review", "existing Node tests unaffected"], "remaining": "Android Gradle test/build requires a valid JDK."},
+    {"id": "service-duplicate-cleanup", "priority": "P1", "status": "STAGED_EXISTING_CHANGE", "files": ["src/services/*.js", "server.js"], "change": "Duplicate extracted service copies and obsolete context were staged for removal while server.js remains the current authoritative path.", "verification": ["npm test 124/124", "npm run check"], "remaining": "Further extraction needs contract-by-contract integration tests."},
+    {"id": "security-hardening-baseline", "priority": "P0/P1", "status": "COMPLETED_EXISTING_CHANGE", "files": ["src/security/*", "src/routes/index.js", "src/store/index.js", "server.js", "public/index.html"], "change": "Existing worktree changes cover route boundary matching, continuous rate limits, token redaction, pairing, certificate/runtime metadata, state single-writer behavior and accessible zoom.", "verification": ["npm test 124/124", "npm run check"]}
+  ]
+}

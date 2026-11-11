@@ -1,0 +1,33 @@
+{
+  "researchDate": "2026-11-12",
+  "method": "GitHub repository and official project page review; source reuse was not performed",
+  "candidateCount": 15,
+  "selectedCount": 8,
+  "deepResearchCount": 5,
+  "candidates": [
+    {"name": "openai/codex", "url": "https://github.com/openai/codex", "category": "AI coding agent", "selection": "deep", "borrow": ["protocol boundary", "local agent lifecycle", "CLI/server separation"], "decision": "adapt concepts only"},
+    {"name": "CoimgRain/Codex-Mini", "url": "https://github.com/CoimgRain/Codex-Mini", "category": "direct predecessor", "selection": "selected", "borrow": ["local bridge flow", "desktop launcher shape"], "decision": "retain attribution; no bulk copy"},
+    {"name": "rustdesk/rustdesk", "url": "https://github.com/rustdesk/rustdesk", "category": "self-hosted remote desktop", "selection": "deep", "borrow": ["connection state", "cross-platform delivery", "self-hosting docs"], "decision": "do not import remote desktop scope"},
+    {"name": "Ylianst/MeshCentral", "url": "https://github.com/Ylianst/MeshCentral", "category": "remote management", "selection": "selected", "borrow": ["device status", "audit visibility"], "decision": "adapt status patterns only"},
+    {"name": "apache/guacamole-client", "url": "https://github.com/apache/guacamole-client", "category": "browser remote access", "selection": "selected", "borrow": ["browser session UX", "connection error states"], "decision": "no gateway dependency"},
+    {"name": "open-webui/open-webui", "url": "https://github.com/open-webui/open-webui", "category": "AI web UI", "selection": "deep", "borrow": ["conversation navigation", "documentation discoverability"], "decision": "avoid model platform expansion"},
+    {"name": "lobehub/lobe-chat", "url": "https://github.com/lobehub/lobe-chat", "category": "AI chat UI", "selection": "selected", "borrow": ["prompt and model controls", "responsive layout"], "decision": "reuse interaction ideas only"},
+    {"name": "continuedev/continue", "url": "https://github.com/continuedev/continue", "category": "developer AI assistant", "selection": "selected", "borrow": ["context controls", "provider abstraction"], "decision": "Codex remains the local provider"},
+    {"name": "Aider-AI/aider", "url": "https://github.com/Aider-AI/aider", "category": "AI coding assistant", "selection": "selected", "borrow": ["task feedback", "repository context"], "decision": "no second coding engine"},
+    {"name": "All-Hands-AI/OpenHands", "url": "https://github.com/All-Hands-AI/OpenHands", "category": "AI software agent", "selection": "candidate", "borrow": ["run visibility", "agent event presentation"], "decision": "scope too broad for bridge"},
+    {"name": "princeton-nlp/SWE-agent", "url": "https://github.com/princeton-nlp/SWE-agent", "category": "software engineering agent", "selection": "candidate", "borrow": ["failure reporting", "execution traces"], "decision": "not a local bridge replacement"},
+    {"name": "microsoft/vscode", "url": "https://github.com/microsoft/vscode", "category": "developer desktop UI", "selection": "candidate", "borrow": ["command palette", "settings organization"], "decision": "reference only"},
+    {"name": "screenpipe/screenpipe", "url": "https://github.com/mediar-ai/screenpipe", "category": "local desktop capture", "selection": "candidate", "borrow": ["local-first status presentation"], "decision": "screen capture is outside current scope"},
+    {"name": "Espanso/espanso", "url": "https://github.com/espanso/espanso", "category": "desktop productivity tool", "selection": "candidate", "borrow": ["global shortcut ergonomics"], "decision": "possible future shortcut reference"},
+    {"name": "Flow-Launcher/Flow.Launcher", "url": "https://github.com/Flow-Launcher/Flow.Launcher", "category": "Windows launcher", "selection": "candidate", "borrow": ["quick actions", "discoverable commands"], "decision": "reference only"}
+  ],
+  "deepResearch": [
+    {"name": "openai/codex", "findings": "Keep Codex App Server/CDP integration behind a narrow adapter; do not reimplement the coding agent."},
+    {"name": "rustdesk/rustdesk", "findings": "Connection state and self-hosting explanations are useful; full remote desktop transport would expand security and product scope."},
+    {"name": "Ylianst/MeshCentral", "findings": "Device status and operational visibility are useful references for the existing system-health view."},
+    {"name": "open-webui/open-webui", "findings": "Conversation navigation and documentation structure are useful; model aggregation and multi-user data planes are not needed."},
+    {"name": "continuedev/continue", "findings": "Context/provider boundaries are useful references; the bridge should keep the local Codex runtime as its single provider."}
+  ],
+  "licensePolicy": "License and current upstream terms must be rechecked before copying any code. This evolution pass copied no third-party source.",
+  "limitations": ["Deep research is a focused source and project-structure review, not a full performance benchmark or exhaustive issue/PR audit.", "Repository activity and license details can change; recheck the target commit before code reuse."]
+}

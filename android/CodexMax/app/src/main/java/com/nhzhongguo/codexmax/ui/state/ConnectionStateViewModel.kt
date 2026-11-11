@@ -9,6 +9,8 @@ import androidx.lifecycle.viewModelScope
 import com.nhzhongguo.codexmax.BuildConfig
 import com.nhzhongguo.codexmax.ConnectionStore
 import com.nhzhongguo.codexmax.ConnectionUrl
+import com.nhzhongguo.codexmax.PinnedTls
+import com.nhzhongguo.codexmax.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,7 +22,6 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
-import java.net.URL
 import java.nio.charset.StandardCharsets
 
 data class UpdateInfo(
@@ -87,10 +88,10 @@ class ConnectionStateViewModel(
         viewModelScope.launch {
             val online = withContext(Dispatchers.IO) {
                 try {
-                    val url = URL(connection.statusUrl())
-                    val http = url.openConnection() as HttpURLConnection
-                    http.connectTimeout = 4000
-                    http.readTimeout = 4000
+                    val http = PinnedTls.openPinnedConnection(
+                        connection.statusUrl(),
+                        store.loadCertFingerprint(),
+                    ) ?: return@withContext false
                     val ok = http.responseCode in 200..299
                     http.disconnect()
                     ok
@@ -140,6 +141,44 @@ class ConnectionStateViewModel(
         showStatus("已清除上次连接", isError = false)
     }
 
+    /** 配对/连接时固定下来的自签名证书指纹（TOFU）。空串表示尚未固定。 */
+    fun pinnedCertFingerprint(): String = store.loadCertFingerprint()
+
+    /** 证书指纹不匹配：不降级、不放行，明确告知用户。 */
+    fun onCertificateRejected() {
+        onConnectionFailed(getApplication<Application>().getString(R.string.certificate_rejected))
+    }
+
+    /**
+     * 用已固定指纹独立验证目标 origin 的证书。
+     * WebView 的 SslError 不暴露证书 DER，无法直接比对；这里直接做一次指纹固定的 TLS 握手，
+     * 成功即证明服务端证书就是已固定的那一张（RFC 2818 的 pinning 判定方式）。
+     */
+    fun verifyPinnedCertificate(origin: String): Boolean {
+        val pinned = store.loadCertFingerprint()
+        if (pinned.isBlank()) return false
+        return PinnedTls.probePinned("$origin/codex/health", pinned)
+    }
+
+    /** 从服务 /codex/health 拉取指纹并固定（仅 https 连接需要）。 */
+    private suspend fun pinCertificate(connection: ConnectionUrl) {
+        if (connection.scheme() != "https") {
+            store.saveCertFingerprint("")
+            return
+        }
+        if (store.loadCertFingerprint().isNotBlank()) return
+        val fingerprint = withContext(Dispatchers.IO) { fetchServerFingerprint(connection) }
+        if (fingerprint.isNotBlank()) store.saveCertFingerprint(fingerprint)
+    }
+
+    private fun fetchServerFingerprint(connection: ConnectionUrl): String {
+        val fingerprint = PinnedTls.fetchFingerprint(connection.healthUrl())
+        if (fingerprint.isBlank()) {
+            Log.w("CodexRemoteBridge", "fingerprint fetch failed for ${connection.origin()}")
+        }
+        return fingerprint
+    }
+
     fun connect(rawUrl: String): Boolean {
         val result = ConnectionUrl.parse(rawUrl)
         if (!result.isValid()) {
@@ -148,6 +187,7 @@ class ConnectionStateViewModel(
         }
         val connection = result.value()
         store.save(connection.normalizedUrl())
+        viewModelScope.launch { pinCertificate(connection) }
         _state.update {
             it.copy(
                 addressInput = connection.normalizedUrl(),
@@ -277,10 +317,10 @@ class ConnectionStateViewModel(
     private fun fetchUpdateInfo(connection: ConnectionUrl): UpdateInfo? {
         var http: HttpURLConnection? = null
         try {
-            val url = URL(connection.configUrl())
-            http = url.openConnection() as HttpURLConnection
-            http.connectTimeout = 4000
-            http.readTimeout = 4000
+            http = PinnedTls.openPinnedConnection(
+                connection.configUrl(),
+                store.loadCertFingerprint(),
+            ) ?: return null
             http.setRequestProperty("x-mobile-typer-token", connection.token())
             if (http.responseCode != 200) return null
             val body = readStream(http.inputStream)

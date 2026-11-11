@@ -1,0 +1,52 @@
+name: Star History
+
+# 每天抓一次 stargazers，生成 docs/star-history.svg 并提交。
+# 说明：star-history.com 对 0 star 的仓库返回 403，README 会裂图，
+# 所以这里自建图表，不依赖第三方渲染服务。
+
+on:
+  schedule:
+    # UTC 01:17，避开整点排队高峰
+    - cron: '17 1 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: star-history
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    name: Update star history chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Generate chart
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/star-history.js
+
+      - name: Verify chart is valid
+        run: node --test test/star-history.test.js
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- docs/star-history.json docs/star-history.svg; then
+            echo "没有变化，跳过提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/star-history.json docs/star-history.svg
+          git commit -m "chore(docs): update star history chart"
+          git push

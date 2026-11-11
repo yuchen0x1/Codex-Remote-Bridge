@@ -2,8 +2,22 @@
 
 把手机变成 Windows 电脑上 Codex Desktop 的"遥控器"——局域网直连、全程本地运行，聊天数据不出你自己的网络。
 
-- 仓库地址：https://gitee.com/yuchen0x1/Codex-Remote-Bridge
+[![Stars](https://img.shields.io/github/stars/yuchen0x1/Codex-Remote-Bridge?style=flat-square&color=8ef0b7)](https://github.com/yuchen0x1/Codex-Remote-Bridge/stargazers)
+[![Forks](https://img.shields.io/github/forks/yuchen0x1/Codex-Remote-Bridge?style=flat-square)](https://github.com/yuchen0x1/Codex-Remote-Bridge/forks)
+[![Last commit](https://img.shields.io/github/last-commit/yuchen0x1/Codex-Remote-Bridge?style=flat-square)](https://github.com/yuchen0x1/Codex-Remote-Bridge/commits/main)
+[![License](https://img.shields.io/github/license/yuchen0x1/Codex-Remote-Bridge?style=flat-square)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Android-4a5568?style=flat-square)
+![Runtime deps](https://img.shields.io/badge/runtime%20deps-0-8ef0b7?style=flat-square)
+
+- 仓库地址：[GitHub](https://github.com/yuchen0x1/Codex-Remote-Bridge) ｜ [Gitee 镜像](https://gitee.com/yuchen0x1/Codex-Remote-Bridge)
 - 适用平台：Windows 电脑 + 手机（浏览器或 Android App）
+
+<a href="https://github.com/yuchen0x1/Codex-Remote-Bridge/stargazers">
+  <img src="docs/star-history.svg" alt="Star 增长图" width="860">
+</a>
+
+> 图表由 `.github/workflows/star-history.yml` 每天自动拉取 stargazers 生成，随仓库一起提交，不依赖第三方图床。
+> 本地重绘：`npm run star-history`（无网络时用 `npm run star-history:offline`）。
 
 ## 一、它能帮你解决什么
 
@@ -108,7 +122,7 @@ node server.js
 
 **构建 Android App**
 
-Android 工程位于 `android/CodexMax`（最低支持 Android 6.0 / API 23），构建环境需要 JDK 17 与 Android SDK 35，构建后输出 `dist\android\ChatGPT-AZ-Android-v1.2.7.apk`。
+Android 工程位于 `android/CodexMax`（最低支持 Android 6.0 / API 23），构建环境需要 JDK 17 与 Android SDK 35，构建后输出 `dist\android\ChatGPT-AZ-Android-v4.1.0.apk`。
 
 ## 五、常见疑问
 

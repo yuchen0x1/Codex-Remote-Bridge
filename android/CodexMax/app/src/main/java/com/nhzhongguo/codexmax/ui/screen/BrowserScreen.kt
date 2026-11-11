@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.view.ViewGroup
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -202,6 +203,30 @@ fun BrowserScreen(
                         }
 
                         webViewClient = object : WebViewClient() {
+                            /**
+                             * 自签名证书处理：以「我们自己的指纹固定握手」为唯一权威。
+                             *
+                             * SslCertificate 不暴露 DER 字节，无法直接算指纹；因此这里不解析它，
+                             * 而是用已固定指纹向同一 origin 再做一次独立 TLS 握手：
+                             * 成功说明服务端证书确实是指纹匹配的那一张，可以放行 WebView；
+                             * 失败则一律 cancel。这样既不会"永远信任"，也不会因自签名而全断。
+                             */
+                            @SuppressLint("WebViewClientOnReceivedSslError")
+                            override fun onReceivedSslError(
+                                view: WebView?,
+                                handler: SslErrorHandler?,
+                                error: android.net.http.SslError?,
+                            ) {
+                                val origin = connection.origin()
+                                val verified = viewModel.verifyPinnedCertificate(origin)
+                                if (verified) {
+                                    handler?.proceed()
+                                } else {
+                                    handler?.cancel()
+                                    viewModel.onCertificateRejected()
+                                }
+                            }
+
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 pageLoaded = false
                                 viewModel.updateProgress(0)
