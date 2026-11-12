@@ -3,11 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v4.0.0)'
+        description: 'Release tag (for example v4.2.0)'
         required: true
         type: string
 
@@ -15,20 +15,37 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
 jobs:
-  # ---- Server syntax check ----
   verify:
-    name: Verify server & modules
+    name: Verify source and release version
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Checkout
+      - name: Checkout release ref
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      - name: Check tag and package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG#v}"
+          package_version="$(node -p "require('./package.json').version")"
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]
+          [[ "$tag" == "$package_version" ]]
+          echo "Release version: $package_version"
 
       - name: Syntax check all modules
         run: npm run check
@@ -36,18 +53,21 @@ jobs:
       - name: Run tests
         run: npm test
 
-  # ---- Android Release APK ----
   android:
-    name: Build Android Release APK
+    name: Build Android release APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: verify
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: android/CodexMax
     steps:
-      - name: Checkout
+      - name: Checkout release ref
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -58,62 +78,184 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Configure Android signing when secrets are available
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_KEYSTORE_BASE64:-}" || -z "${ANDROID_KEYSTORE_PASSWORD:-}" || -z "${ANDROID_KEY_ALIAS:-}" || -z "${ANDROID_KEY_PASSWORD:-}" ]]; then
+            echo "ANDROID_SIGNING=unsigned" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > release-signing.keystore
+          cat > release-signing.properties <<EOF
+          storeFile=release-signing.keystore
+          storePassword=${ANDROID_KEYSTORE_PASSWORD}
+          keyAlias=${ANDROID_KEY_ALIAS}
+          keyPassword=${ANDROID_KEY_PASSWORD}
+          EOF
+          echo "ANDROID_SIGNING=signed" >> "$GITHUB_ENV"
+
       - name: Grant Gradle wrapper execute permission
         run: chmod +x gradlew
 
       - name: Assemble release APK
         run: ./gradlew assembleRelease --no-daemon
 
-      - name: Upload release APK
+      - name: Normalize APK name
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../../dist/android
+          apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
+          test -n "$apk"
+          cp "$apk" "../../dist/android/ChatGPT-AZ-Android-v${RELEASE_TAG#v}.apk"
+
+      - name: Upload Android asset
         uses: actions/upload-artifact@v4
         with:
-          name: codexmax-release-apk
-          path: android/CodexMax/app/build/outputs/apk/release/*.apk
+          name: release-android-${{ env.RELEASE_TAG }}
+          path: dist/android/*.apk
           if-no-files-found: error
 
-  # ---- Create GitHub Release ----
+  windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+    needs: verify
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install Inno Setup 6
+        shell: powershell
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build Windows installer
+        shell: powershell
+        run: .\scripts\build-codex-max-windows-installer.ps1 -SelfContained
+
+      - name: Upload Windows asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-${{ env.RELEASE_TAG }}
+          path: dist/windows/installer/*.exe
+          if-no-files-found: error
+
+  macos:
+    name: Build macOS installer
+    runs-on: macos-14
+    timeout-minutes: 60
+    needs: verify
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build macOS installer
+        run: |
+          chmod +x scripts/build-codex-mini-installer.sh
+          scripts/build-codex-mini-installer.sh
+
+      - name: Upload macOS asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-${{ env.RELEASE_TAG }}
+          path: dist/*Installer.pkg
+          if-no-files-found: error
+
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [verify, android]
+    timeout-minutes: 15
+    needs: [verify, android, windows, macos]
     permissions:
       contents: write
     steps:
-      - name: Checkout
+      - name: Checkout release ref
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
-      - name: Download Android APK
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download Android asset
         uses: actions/download-artifact@v4
         with:
-          name: codexmax-release-apk
-          path: artifacts/android
+          name: release-android-${{ env.RELEASE_TAG }}
+          path: release-assets
 
-      - name: Prepare release assets
-        run: |
-          mkdir -p release-assets
-          cp artifacts/android/*.apk release-assets/ || true
-          ls -la release-assets/
+      - name: Download Windows asset
+        uses: actions/download-artifact@v4
+        with:
+          name: release-windows-${{ env.RELEASE_TAG }}
+          path: release-assets
 
-      - name: Extract version
-        id: version
+      - name: Download macOS asset
+        uses: actions/download-artifact@v4
+        with:
+          name: release-macos-${{ env.RELEASE_TAG }}
+          path: release-assets
+
+      - name: Generate checksums and update manifest
         run: |
-          TAG="${{ github.ref_name }}"
-          if [ -z "$TAG" ] || [ "$TAG" = "refs/heads/main" ]; then
-            TAG="${{ inputs.tag }}"
+          set -euo pipefail
+          test -n "$(find release-assets -maxdepth 1 -type f | head -n 1)"
+          node scripts/release-manifest.js \
+            --assets-dir release-assets \
+            --version "${RELEASE_TAG#v}" \
+            --tag "$RELEASE_TAG" \
+            --repository "${GITHUB_REPOSITORY}"
+          cat release-assets/update-manifest.json
+
+      - name: Refuse to overwrite an existing GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; use a new version tag instead of overwriting it." >&2
+            exit 1
           fi
-          TAG="${TAG#v}"
-          echo "version=$TAG" >> $GITHUB_OUTPUT
-          echo "Extracted version: $TAG"
 
-      - name: Create Release
+      - name: Create GitHub Release without overwriting an existing release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name || inputs.tag }}
-          name: ${{ github.ref_name || inputs.tag }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
           files: release-assets/*
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
+          fail_on_unmatched_files: true
+          overwrite_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

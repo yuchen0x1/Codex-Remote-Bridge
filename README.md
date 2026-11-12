@@ -49,6 +49,10 @@ Codex 正在电脑上跑任务，人却不得不守在工位前盯屏幕？Codex
 - 连接链接自带随机 token，支持一键轮换，旧 token 立即失效
 - 不保存聊天正文或图片内容
 
+## 最新更新
+
+当前版本为 `4.1.0`。项目已接入 GitHub Releases 更新清单：Windows 会下载后校验文件大小和 SHA-256 再启动安装，Android 和 macOS 会检查公开 Release 并提供安全的下载入口。发布与签名配置见 [自动更新文档](docs/AUTO_UPDATE.md)，完整记录见 [发布说明](docs/releases/release-notes.md)。当前发布清单明确标记为未签名，不能替代平台代码签名。
+
 ## 三、技术构成
 
 - 电脑端：Node.js 本地服务 + WPF 管理面板

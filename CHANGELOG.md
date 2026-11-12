@@ -2,6 +2,10 @@
 
 # Unreleased
 
+- Feat: add GitHub Releases update manifest generation with SHA-256 asset checksums.
+- Feat: Windows checks GitHub releases, downloads to a temporary file, verifies size and SHA-256, and starts the installer only after verification.
+- Feat: Android and macOS clients can check the public GitHub update manifest and open platform assets.
+- Docs: add `docs/AUTO_UPDATE.md` with release, signing, testing, and recovery procedures.
 - Chore: rename the user-facing project and desktop/mobile application branding to Codex Remote Bridge
 - Chore: update package metadata, documentation, PWA metadata, build outputs, and installer names
 - Compatibility: preserve legacy ChatGPT Win/Codex Max configuration paths, installer lookup, and web route aliases
@@ -133,4 +137,4 @@
 
 - Android unit tests fail on some machines due to Gradle worker classpath issue (workaround: assembleDebug succeeds independently)
 - macOS resource bundle in this repo tracks Windows; build on macOS requires Xcode + .NET 8 SDK
-- No automatic update mechanism; upgrade by rebuilding or downloading from GitHub Releases
+- Automatic updates are now checked through the GitHub Release manifest; Windows verifies the downloaded installer before starting it, while Android and macOS expose allowlisted HTTPS release assets for user-driven installation

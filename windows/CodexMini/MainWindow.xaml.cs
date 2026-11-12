@@ -28,6 +28,7 @@ public partial class MainWindow : Window
             LanDiagnosticButton,
             OpenApkButton,
             OpenInstallerButton,
+            UpdateButton,
             RestartButton,
             RefreshButton,
             OpenLogsButton,
@@ -135,17 +136,45 @@ public partial class MainWindow : Window
     }
 
     private bool updateChecked;
+    private UpdateCheckResult? latestUpdate;
 
-    private async Task CheckUpdateOnceAsync()
+    private async void Update_Click(object sender, RoutedEventArgs e)
     {
-        if (updateChecked) return;
+        await CheckUpdateOnceAsync(force: true);
+    }
+
+    private async Task CheckUpdateOnceAsync(bool force = false)
+    {
+        if (updateChecked && !force) return;
         updateChecked = true;
-        var message = await service.CheckForUpdateAsync();
-        if (!string.IsNullOrWhiteSpace(message))
+        var update = await service.CheckForUpdateAsync();
+        latestUpdate = update;
+        if (update is null)
         {
-            WpfMessageBox.Show(this, message + Environment.NewLine + Environment.NewLine +
-                "可从“打开安装包/APK 位置”按钮查看构建产物，或在电脑端项目目录重新构建。",
-                "发现新版本", MessageBoxButton.OK, MessageBoxImage.Information);
+            if (force) WpfMessageBox.Show(this, "当前已是最新版本，或暂时无法访问更新服务。", "检查更新", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var size = update.SizeBytes > 0 ? $"大小：{update.SizeBytes / 1024d / 1024d:F1} MB" : "大小：未知";
+        var signature = update.SignatureVerified ? "签名：已验证" : "签名：发布清单未提供数字签名";
+        var message = $"发现 Windows 新版本 v{update.LatestVersion}。{Environment.NewLine}{size}{Environment.NewLine}{signature}";
+        var result = WpfMessageBox.Show(this, message + Environment.NewLine + Environment.NewLine + "现在下载并校验后启动安装程序吗？", "发现新版本", MessageBoxButton.YesNo, MessageBoxImage.Information);
+        if (result != MessageBoxResult.Yes) return;
+
+        try
+        {
+            SetBusy(true);
+            var progress = new Progress<double>(value => UpdatedAt.Text = $"下载更新 {value:P0}");
+            var installer = await service.DownloadAndInstallUpdateAsync(update, progress);
+            WpfMessageBox.Show(this, $"已完成下载、大小检查和 SHA-256 校验。安装程序已启动：{Environment.NewLine}{installer}", "更新已准备", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            WpfMessageBox.Show(this, $"更新失败，当前版本保持不变。{Environment.NewLine}{ex.Message}", "更新失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            SetBusy(false);
         }
     }
 

@@ -27,6 +27,9 @@ import java.nio.charset.StandardCharsets
 data class UpdateInfo(
     val latestVersion: String,
     val downloadUrl: String,
+    val sizeBytes: Long = 0,
+    val sha256: String = "",
+    val releaseNotesUrl: String = "",
 )
 
 data class ConnectionState(
@@ -326,6 +329,11 @@ class ConnectionStateViewModel(
             val body = readStream(http.inputStream)
             val root = JSONObject(body)
             val update = root.optJSONObject("update") ?: return null
+            val manifestUrl = update.optString("manifestUrl")
+            if (manifestUrl.isNotBlank()) {
+                if (!isAllowedGithubUrl(manifestUrl)) return null
+                return fetchRemoteManifest(manifestUrl)
+            }
             val androidUpdate = update.optJSONObject("android") ?: return null
             if (!androidUpdate.optBoolean("available")) return null
             val latest = androidUpdate.optString("latestVersion")
@@ -333,6 +341,54 @@ class ConnectionStateViewModel(
             return UpdateInfo(latest, connection.downloadUrl())
         } finally {
             http?.disconnect()
+        }
+    }
+
+    private fun fetchRemoteManifest(url: String): UpdateInfo? {
+        var remote: HttpURLConnection? = null
+        return try {
+            remote = (java.net.URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 8_000
+                readTimeout = 8_000
+                requestMethod = "GET"
+                setRequestProperty("Accept", "application/json")
+            }
+            if (remote.responseCode !in 200..299) return null
+            val root = JSONObject(readStream(remote.inputStream))
+            val latest = root.optString("version")
+            val assets = root.optJSONArray("assets") ?: return null
+            for (index in 0 until assets.length()) {
+                val asset = assets.optJSONObject(index) ?: continue
+                if (asset.optString("platform") != "android" || asset.optString("kind") != "android-apk") continue
+                val download = asset.optString("url")
+                if (latest.isBlank() || !isAllowedGithubUrl(download)) return null
+                return UpdateInfo(
+                    latestVersion = latest,
+                    downloadUrl = download,
+                    sizeBytes = asset.optLong("sizeBytes", 0),
+                    sha256 = asset.optString("sha256"),
+                    releaseNotesUrl = root.optString("releaseNotesUrl"),
+                )
+            }
+            null
+        } catch (e: Exception) {
+            Log.d(TAG, "Remote update manifest unavailable: ${e.message}")
+            null
+        } finally {
+            remote?.disconnect()
+        }
+    }
+
+    private fun isAllowedGithubUrl(value: String): Boolean {
+        return try {
+            val uri = android.net.Uri.parse(value)
+            uri.scheme == "https" && uri.host in setOf(
+                "github.com",
+                "objects.githubusercontent.com",
+                "github-releases.githubusercontent.com",
+            )
+        } catch (_: Exception) {
+            false
         }
     }
 

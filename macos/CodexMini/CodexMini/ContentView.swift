@@ -97,6 +97,21 @@ struct ContentView: View {
                 LargeActionButton(title: "重启服务", systemImage: "arrow.clockwise", tint: .appTertiary) { Task { await service.restart() } }
                 LargeActionButton(title: "刷新状态", systemImage: "arrow.triangle.2.circlepath", tint: .appTextTertiary) { Task { await service.refresh() } }
             }
+            HStack(spacing: 10) {
+                Text(service.updateText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.appTextSecondary)
+                    .lineLimit(2)
+                Spacer()
+                Button("检查更新") { Task { await service.checkForUpdate() } }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.appPrimary)
+                    .disabled(service.latestUpdateURL != nil)
+                if service.latestUpdateURL != nil {
+                    Button("打开下载") { service.openLatestUpdate() }
+                        .buttonStyle(.bordered)
+                }
+            }
         }
         .padding(16)
         .panelBackground(cornerRadius: 22)

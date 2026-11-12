@@ -44,6 +44,18 @@ internal sealed record CdpLaunchSnapshot(
     string Message
 );
 
+internal sealed record UpdateCheckResult(
+    string CurrentVersion,
+    string LatestVersion,
+    string ReleaseDate,
+    string ReleaseNotesUrl,
+    string FileName,
+    string DownloadUrl,
+    long SizeBytes,
+    string Sha256,
+    bool SignatureVerified
+);
+
 internal sealed class ServiceManager
 {
     private const string DisplayName = "Codex Remote Bridge";
@@ -529,7 +541,7 @@ internal sealed class ServiceManager
         return (await GetHealthAsync(config)).Ok;
     }
 
-    public async Task<string?> CheckForUpdateAsync()
+    public async Task<UpdateCheckResult?> CheckForUpdateAsync()
     {
         var config = ReadConfig();
         try
@@ -545,34 +557,140 @@ internal sealed class ServiceManager
             var update = payload?.Update;
             if (update is null) return null;
 
-            var lines = new List<string>();
             var currentVersion = typeof(ServiceManager).Assembly.GetName().Version?.ToString(3) ?? "3.1.1";
-            if (update.Windows is { Available: true } windows &&
-                TryParseVersion(windows.LatestVersion, out var latestWindows) &&
-                TryParseVersion(currentVersion, out var current) &&
-                latestWindows > current)
+            var manifestUrl = update.ManifestUrl;
+            if (!string.IsNullOrWhiteSpace(manifestUrl))
             {
-                lines.Add($"电脑版新版本 v{windows.LatestVersion} 可下载安装。");
-            }
-
-            if (update.Android is { Available: true } android && !string.IsNullOrWhiteSpace(android.LatestVersion))
-            {
-                var localApk = AndroidApkPath;
-                var localVersion = localApk != null && File.Exists(localApk)
-                    ? Path.GetFileNameWithoutExtension(localApk)
-                    : "";
-                if (localVersion.IndexOf(android.LatestVersion, StringComparison.OrdinalIgnoreCase) < 0)
+                var manifest = await FetchReleaseManifestAsync(manifestUrl);
+                var asset = manifest?.Assets?.FirstOrDefault(item =>
+                    string.Equals(item.Platform, "windows", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(item.Kind, "windows-installer", StringComparison.OrdinalIgnoreCase));
+                if (manifest is not null && asset is not null &&
+                    TryParseVersion(manifest.Version, out var latestManifest) &&
+                    TryParseVersion(currentVersion, out var currentManifest) &&
+                    latestManifest > currentManifest &&
+                    IsAllowedDownloadUri(asset.Url))
                 {
-                    lines.Add($"Android 客户端最新版本 v{android.LatestVersion}。");
+                    return new UpdateCheckResult(
+                        currentVersion,
+                        manifest.Version ?? "",
+                        manifest.ReleaseDate ?? "",
+                        manifest.ReleaseNotesUrl ?? manifestUrl,
+                        asset.FileName ?? "Codex-Remote-Bridge-Windows-Setup.exe",
+                        asset.Url ?? "",
+                        asset.SizeBytes,
+                        asset.Sha256 ?? "",
+                        string.Equals(manifest.SignatureStatus, "verified", StringComparison.OrdinalIgnoreCase)
+                    );
                 }
             }
 
-            return lines.Count == 0 ? null : string.Join(Environment.NewLine, lines);
+            return null;
         }
         catch
         {
             return null;
         }
+    }
+
+    public async Task<string> DownloadAndInstallUpdateAsync(UpdateCheckResult update, IProgress<double>? progress = null)
+    {
+        if (!IsAllowedDownloadUri(update.DownloadUrl)) throw new InvalidOperationException("更新下载地址不受信任，已拒绝下载。");
+        if (!TryParseVersion(update.LatestVersion, out var latest) ||
+            !TryParseVersion(update.CurrentVersion, out var current) || latest <= current)
+        {
+            throw new InvalidOperationException("远程版本不是比当前版本更新的稳定版本。");
+        }
+        if (string.IsNullOrWhiteSpace(update.Sha256) || !RegexHexSha256(update.Sha256))
+        {
+            throw new InvalidOperationException("更新清单缺少有效 SHA-256，已拒绝安装。");
+        }
+
+        var updatesDir = Path.Combine(appDataDir, "updates");
+        Directory.CreateDirectory(updatesDir);
+        var safeName = Path.GetFileName(update.FileName);
+        if (string.IsNullOrWhiteSpace(safeName) || !safeName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("更新文件名无效，已拒绝安装。");
+        }
+        var tempPath = Path.Combine(updatesDir, $"{safeName}.{Guid.NewGuid():N}.download");
+        var installerPath = Path.Combine(updatesDir, safeName);
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+            using var response = await client.GetAsync(update.DownloadUrl, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+            var contentLength = response.Content.Headers.ContentLength;
+            if (update.SizeBytes > 0 && contentLength.HasValue && contentLength.Value != update.SizeBytes)
+            {
+                throw new InvalidOperationException("下载大小与更新清单不一致。");
+            }
+            await using (var input = await response.Content.ReadAsStreamAsync())
+            await using (var output = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                var buffer = new byte[128 * 1024];
+                long total = 0;
+                int read;
+                while ((read = await input.ReadAsync(buffer)) > 0)
+                {
+                    await output.WriteAsync(buffer.AsMemory(0, read));
+                    total += read;
+                    if (update.SizeBytes > 0) progress?.Report(Math.Min(1d, (double)total / update.SizeBytes));
+                }
+                if (update.SizeBytes > 0 && total != update.SizeBytes) throw new InvalidOperationException("下载文件大小校验失败。");
+            }
+
+            var actualHash = await ComputeSha256Async(tempPath);
+            if (!actualHash.Equals(update.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("更新文件 SHA-256 校验失败，已拒绝安装。");
+            }
+            if (File.Exists(installerPath)) File.Delete(installerPath);
+            File.Move(tempPath, installerPath);
+            StartInstaller(installerPath);
+            return installerPath;
+        }
+        catch
+        {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+            throw;
+        }
+    }
+
+    private static bool RegexHexSha256(string value) => value.Length == 64 && value.All(Uri.IsHexDigit);
+
+    private static async Task<string> ComputeSha256Async(string file)
+    {
+        await using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var sha = SHA256.Create();
+        var hash = await sha.ComputeHashAsync(stream);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static bool IsAllowedDownloadUri(string? value)
+    {
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+            uri.Scheme == Uri.UriSchemeHttps &&
+            (uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) ||
+             uri.Host.Equals("objects.githubusercontent.com", StringComparison.OrdinalIgnoreCase) ||
+             uri.Host.Equals("github-releases.githubusercontent.com", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void StartInstaller(string file)
+    {
+        var full = Path.GetFullPath(file);
+        if (!File.Exists(full) || !full.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("安装程序不存在。");
+        var start = new ProcessStartInfo(full) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(full)! };
+        StartCheckedShellOpen(start);
+    }
+
+    private static async Task<ReleaseManifest?> FetchReleaseManifestAsync(string url)
+    {
+        if (!IsAllowedDownloadUri(url)) return null;
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        using var response = await client.GetAsync(url);
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<ReleaseManifest>(JsonOptions);
     }
 
     private static bool TryParseVersion(string? text, out Version version)
@@ -1122,6 +1240,12 @@ internal sealed class ServiceManager
 
         [JsonPropertyName("windows")]
         public PlatformUpdate? Windows { get; set; }
+
+        [JsonPropertyName("manifestUrl")]
+        public string? ManifestUrl { get; set; }
+
+        [JsonPropertyName("releaseUrl")]
+        public string? ReleaseUrl { get; set; }
     }
 
     private sealed class PlatformUpdate
@@ -1134,6 +1258,48 @@ internal sealed class ServiceManager
 
         [JsonPropertyName("fileName")]
         public string? FileName { get; set; }
+
+        [JsonPropertyName("size")]
+        public long SizeBytes { get; set; }
+    }
+
+    private sealed class ReleaseManifest
+    {
+        [JsonPropertyName("version")]
+        public string? Version { get; set; }
+
+        [JsonPropertyName("releaseDate")]
+        public string? ReleaseDate { get; set; }
+
+        [JsonPropertyName("releaseNotesUrl")]
+        public string? ReleaseNotesUrl { get; set; }
+
+        [JsonPropertyName("signatureStatus")]
+        public string? SignatureStatus { get; set; }
+
+        [JsonPropertyName("assets")]
+        public List<ReleaseAsset>? Assets { get; set; }
+    }
+
+    private sealed class ReleaseAsset
+    {
+        [JsonPropertyName("platform")]
+        public string? Platform { get; set; }
+
+        [JsonPropertyName("kind")]
+        public string? Kind { get; set; }
+
+        [JsonPropertyName("fileName")]
+        public string? FileName { get; set; }
+
+        [JsonPropertyName("sizeBytes")]
+        public long SizeBytes { get; set; }
+
+        [JsonPropertyName("sha256")]
+        public string? Sha256 { get; set; }
+
+        [JsonPropertyName("url")]
+        public string? Url { get; set; }
     }
 
     private sealed class LauncherConfig

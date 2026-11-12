@@ -13,6 +13,20 @@ struct ThreadRow: Decodable {
     let name: String?
 }
 
+struct ReleaseManifest: Decodable {
+    let version: String?
+    let releaseDate: String?
+    let releaseNotesUrl: String?
+    let assets: [ReleaseAsset]?
+}
+
+struct ReleaseAsset: Decodable {
+    let platform: String?
+    let kind: String?
+    let url: String?
+    let fileName: String?
+}
+
 enum ServiceState: Equatable {
     case notInstalled
     case unloaded
@@ -43,6 +57,8 @@ final class ServiceManager: ObservableObject {
     @Published var lastUpdated = Date()
     @Published var showAlert = false
     @Published var alertMessage = ""
+    @Published var updateText = "检查更新中…"
+    @Published var latestUpdateURL: URL?
 
     let appName: String
     private let label: String
@@ -106,6 +122,39 @@ final class ServiceManager: ObservableObject {
         await refreshThreads()
         logPreview = readLogPreview()
         lastUpdated = Date()
+    }
+
+    func checkForUpdate() async {
+        let current = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.0.0"
+        guard let url = URL(string: "https://github.com/yuchen0x1/Codex-Remote-Bridge/releases/latest/download/update-manifest.json") else { return }
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 10
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+            let manifest = try JSONDecoder().decode(ReleaseManifest.self, from: data)
+            guard let latest = manifest.version,
+                  compareVersions(latest, current) > 0,
+                  let asset = manifest.assets?.first(where: { $0.platform == "macos" && ($0.kind == "macos-installer" || $0.kind == "macos-dmg") }),
+                  let download = asset.url,
+                  let downloadURL = URL(string: download),
+                  downloadURL.scheme == "https",
+                  ["github.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com"].contains(downloadURL.host?.lowercased() ?? "") else {
+                updateText = "当前已是最新版本 v\(current)"
+                latestUpdateURL = nil
+                return
+            }
+            latestUpdateURL = downloadURL
+            let size = asset.fileName ?? "macOS 安装包"
+            updateText = "发现 v\(latest)：\(size)（下载后需手动安装；当前发布未提供 Apple 签名校验）"
+        } catch {
+            updateText = "暂时无法检查更新"
+        }
+    }
+
+    func openLatestUpdate() {
+        guard let url = latestUpdateURL else { return }
+        NSWorkspace.shared.open(url)
     }
 
     func start() async {
@@ -321,6 +370,16 @@ final class ServiceManager: ObservableObject {
     private func present(_ message: String) {
         alertMessage = message
         showAlert = true
+    }
+
+    private func compareVersions(_ left: String, _ right: String) -> Int {
+        let a = left.split(separator: ".").map { Int($0) ?? 0 }
+        let b = right.split(separator: ".").map { Int($0) ?? 0 }
+        for index in 0..<max(a.count, b.count) {
+            let diff = (index < a.count ? a[index] : 0) - (index < b.count ? b[index] : 0)
+            if diff != 0 { return diff }
+        }
+        return 0
     }
 }
 

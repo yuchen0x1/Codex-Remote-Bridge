@@ -13,9 +13,10 @@ struct CodexMiniApp: App {
                 .task {
                     await service.prepareIfNeeded()
                     await service.refresh()
+                    await service.checkForUpdate()
                 }
                 .onChange(of: scenePhase) { phase in
-                    if phase == .active { Task { await service.refresh() } }
+                    if phase == .active { Task { await service.refresh(); await service.checkForUpdate() } }
                 }
         }
         .defaultSize(width: 980, height: 650)

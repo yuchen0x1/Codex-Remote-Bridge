@@ -107,6 +107,22 @@ const DIST_WINDOWS_INSTALLER_DIR = path.join(DIST_DIR, 'windows', 'installer');
 const SERVICE_VERSION = (() => {
   try { return require('./package.json').version || '0.0.0'; } catch { return '0.0.0'; }
 })();
+const UPDATE_REPOSITORY = String(
+  process.env.CODEX_MAX_UPDATE_REPOSITORY ||
+  process.env.CODEX_MINI_UPDATE_REPOSITORY ||
+  'yuchen0x1/Codex-Remote-Bridge',
+).trim();
+const UPDATE_CHANNEL = String(
+  process.env.CODEX_MAX_UPDATE_CHANNEL ||
+  process.env.CODEX_MINI_UPDATE_CHANNEL ||
+  'stable',
+).trim() || 'stable';
+const UPDATE_MANIFEST_URL = String(
+  process.env.CODEX_MAX_UPDATE_MANIFEST_URL ||
+  process.env.CODEX_MINI_UPDATE_MANIFEST_URL ||
+  `https://github.com/${UPDATE_REPOSITORY}/releases/latest/download/update-manifest.json`,
+).trim();
+const UPDATE_RELEASE_URL = `https://github.com/${UPDATE_REPOSITORY}/releases/latest`;
 let TOKEN = loadPersistedToken() || process.env.MOBILE_TYPER_TOKEN || crypto.randomBytes(12).toString('base64url');
 const codexAppServer = new CodexAppServer({ cwd: __dirname });
 
@@ -4801,6 +4817,11 @@ function updateInfo() {
   const windows = latestWindowsInstallerInfo();
   return {
     service: SERVICE_VERSION,
+    currentVersion: SERVICE_VERSION,
+    channel: UPDATE_CHANNEL,
+    repository: UPDATE_REPOSITORY,
+    manifestUrl: UPDATE_MANIFEST_URL,
+    releaseUrl: UPDATE_RELEASE_URL,
     android: android ? { latestVersion: android.version, fileName: android.name, available: true } : { available: false },
     windows: windows ? { latestVersion: windows.version, fileName: windows.name, size: windows.size, available: true } : { available: false },
   };
