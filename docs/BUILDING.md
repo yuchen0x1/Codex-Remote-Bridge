@@ -1,5 +1,7 @@
 # Building from source
 
+> v4.2.0 is the final release. This guide is retained for independent builds after permanent archival; no further maintenance is provided.
+
 ## Prerequisites
 
 ### Windows
@@ -30,8 +32,16 @@ cd android/CodexMax
 .\gradlew.bat testDebugUnitTest lintDebug assembleDebug
 ```
 
-The output APK will be at:
-`android/CodexMax/app/build/outputs/apk/debug/app-debug.apk`
+With `CODEX_MAX_ANDROID_BUILD_DIR` set as above, the debug APK is at
+`C:\android-build-out\outputs\apk\debug\app-debug.apk`. Without that override, it is at
+`android/CodexMax/app/build/outputs/apk/debug/app-debug.apk`.
+
+For a signed release APK, run `scripts/build-codex-max-android.ps1` from the repository root.
+Set `ANDROID_HOME` or `ANDROID_SDK_ROOT` to your SDK (or use `local.properties`). The script
+creates a local Release key on its first run, verifies the APK signature and alignment,
+and writes `dist/android/ChatGPT-AZ-Android-v4.2.0.apk`. Back up the ignored
+`android/CodexMax/signing/` directory and `release-signing.properties` together;
+do not commit or upload either. Reuse the same key for compatible independent builds.
 
 ### Windows desktop app
 ```powershell
@@ -48,9 +58,17 @@ The output APK will be at:
 # Output: dist\windows\installer\Codex-Remote-Bridge-Windows-Setup.exe
 ```
 
-### macOS (upstream)
+### macOS
 The macOS Xcode project is at `macos/CodexMini/`.
 It requires Xcode 15+ and shares the same Node.js service files.
+
+```sh
+bash scripts/build-codex-mini-installer.sh
+# Output: dist/Codex Remote Bridge Installer.pkg
+```
+
+The final GitHub build uses the Apple Silicon `macos-15` runner and bundles its arm64 Node runtime.
+The distributed macOS package targets Apple Silicon; Intel users need their own native build.
 
 > **Note**: `macos/CodexMini/CodexMini/Resources/CodexMiniProject/` is a build-time
 > generated copy of the Node service, refreshed by `scripts/build-codex-mini-app.sh`

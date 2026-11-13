@@ -15,6 +15,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Content Include="..\..\LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <EmbeddedResource Include="CodexMaxPayload.zip" LogicalName="CodexMaxPayload.zip" Condition="Exists('CodexMaxPayload.zip')" />
     <EmbeddedResource Include="Assets\ChatGPTWin.ico" LogicalName="CodexMiniWin.Resources.ChatGPTWin.ico" />

@@ -54,6 +54,7 @@ if (Test-Path -LiteralPath $payloadTemp) {
 New-Item -ItemType Directory -Force -Path (Join-Path $payloadTemp 'service') | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot 'server.js') -Destination (Join-Path $payloadTemp 'service\server.js') -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'package.json') -Destination (Join-Path $payloadTemp 'service\package.json') -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $payloadTemp 'service\LICENSE') -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'src') -Destination (Join-Path $payloadTemp 'service') -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot 'public') -Destination (Join-Path $payloadTemp 'service') -Recurse -Force
 if ($NodePath -and (Test-Path -LiteralPath $NodePath)) {

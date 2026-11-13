@@ -12,4 +12,5 @@
 | [更新机制](AUTO_UPDATE.md) | 清单、哈希、签名与恢复 |
 | [移动端验收](MOBILE_QA.md) | 真机验证流程与未覆盖范围 |
 | [发布前暴露面审计](releases/v4.2.0-exposure-audit.md) | 已处理事项与签名限制 |
+| [收尾与缓存整理](releases/v4.2.0-closeout.md) | 验证范围、保留文件与清理限制 |
 | [历史归档](archive/README.md) | 旧方案、审计、演进报告，仅供参考 |

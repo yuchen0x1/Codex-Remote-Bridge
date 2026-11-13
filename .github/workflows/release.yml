@@ -154,6 +154,19 @@ jobs:
         shell: powershell
         run: .\scripts\build-codex-max-windows-installer.ps1 -SelfContained
 
+      - name: Verify Windows payload
+        shell: pwsh
+        run: |
+          $payload = 'dist/windows/Codex Remote Bridge InstallerPayload'
+          $files = @(Get-ChildItem -LiteralPath $payload -Recurse -File)
+          $forbidden = @($files | Where-Object { $_.Name -match '(?i)(\.p12$|\.jks$|\.pdb$|release-signing\.properties$|^state\.json$|^runtime\.json$)' })
+          if ($forbidden.Count) { throw 'Private state, signing material or debug symbols found in payload' }
+          if (-not (Test-Path -LiteralPath "$payload/LICENSE")) { throw 'Missing license' }
+          $version = (Get-Content -LiteralPath "$payload/Resources/CodexMaxProject/package.json" -Raw | ConvertFrom-Json).version
+          if ($version -ne $env:RELEASE_TAG.TrimStart('v')) { throw 'Embedded service version mismatch' }
+          if (-not (Test-Path -LiteralPath "$payload/Resources/CodexMaxProject/public/release-notes.html")) { throw 'Missing release notes' }
+          Write-Host "Verified $($files.Count) Windows payload files; service $version"
+
       - name: Upload Windows asset
         uses: actions/upload-artifact@v4
         with:
@@ -183,6 +196,20 @@ jobs:
         run: |
           chmod +x scripts/build-codex-mini-installer.sh
           scripts/build-codex-mini-installer.sh
+
+      - name: Verify macOS payload
+        run: |
+          app=".build/codex-mini-installer/payload/Applications/Codex Remote Bridge.app"
+          service="$app/Contents/Resources/CodexMiniProject"
+          node -e 'const fs = require("fs"); if (JSON.parse(fs.readFileSync(process.argv[1])).version !== process.argv[2]) process.exit(1)' "$service/package.json" "${RELEASE_TAG#v}"
+          test -f "$service/LICENSE"
+          test -f "$service/public/release-notes.html"
+          if find "$app" -type f \( -name '*.p12' -o -name '*.jks' -o -name 'release-signing.properties' -o -name 'state.json' -o -name 'runtime.json' \) | grep -q .; then
+            echo 'Private state or signing material found in payload' >&2
+            exit 1
+          fi
+          file "$app/Contents/Resources/node/node"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist"
 
       - name: Upload macOS asset
         uses: actions/upload-artifact@v4
