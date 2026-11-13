@@ -1,13 +1,37 @@
-# Release notes
+# 更新日志
 
-## v4.2.0 · 2026-11-13
+## v4.2.0 · 2026-11-13 · 最终版本
 
-- Web pairing defaults to read-only; select read-write explicitly to control the computer. Connected device sessions can be reviewed and revoked in Settings → Configuration.
-- Token rotation now invalidates old sessions, unused pairing codes and WebSocket connections. If you shared a legacy `master:ro` link, rotate the master token and pair devices again.
-- Fixed authenticated browser polling quotas, broken pairing/system-control URLs, unbounded scheduled retries, cron re-enable timing and custom data-directory isolation.
-- See [the v4.2.0 release guide](v4.2.0.md) for downloads, upgrade compatibility and signing limitations.
+本项目永久停止维护。v4.2.0 发布后仓库只读归档，不再提供功能、兼容性或安全更新。源码和发布文件继续保留；详见 [归档说明](../ARCHIVE.md)。
 
-- Windows checks the GitHub Release manifest, downloads the installer to a temporary file, verifies its size and SHA-256, and only then starts the installer.
-- Android and macOS check the public GitHub update manifest and expose allowlisted HTTPS release assets for user-driven installation.
-- Downloads include an update manifest and SHA-256 checksums to check file integrity.
-- Android uses a locally held Release signing key. Windows and macOS installers lack platform publisher signatures; the update manifest itself is unsigned.
+### 设备与权限
+
+- 新设备配对默认只读，需要遥控电脑时明确选择读写。
+- 在「设置 → 配置」查看会话权限、最近访问和到期时间，撤销其他设备的连接。
+- 轮换主令牌会让旧会话、未使用的配对码和 WebSocket 连接失效。
+
+### 稳定性修复
+
+- 正常浏览器轮询使用已认证访问配额，减少误限流。
+- 修复配对二维码与电脑快捷控制请求地址重复的问题。
+- 定时任务失败重试遵守次数上限；重新启用 cron 按时区计算时间；停用或删除后不再重试。
+- 自定义数据目录同时管理队列、执行日志与证书；HTTP 测试命令可跨平台使用。
+
+### 布局与阅读
+
+- 调整设置页导航与正文比例、深浅主题文字对比度、长说明换行和手机端间距。
+- 增加「版本与归档」设置和本地更新日志页面。
+- 重整 README 和文档导航，将旧阶段报告归入历史资料，关闭 Star 图表定时更新。
+
+### 下载与升级
+
+- Windows 校验安装包大小与 SHA-256 后启动安装；Android/macOS 提供下载入口。
+- 附件包含更新清单和 SHA-256 校验文件。Windows/macOS 缺少平台发行签名，清单本身未签名。
+- 若分享过旧格式 `主令牌:ro` 链接，请轮换主令牌并重新配对。
+- Android 签名不同的旧安装不能直接覆盖；升级前请保留配置。
+
+[下载最终版本](https://github.com/yuchen0x1/Codex-Remote-Bridge/releases/tag/v4.2.0) · [完整升级说明](v4.2.0.md)
+
+## 历史版本
+
+[CHANGELOG.md](../../CHANGELOG.md) 保留 v4.1.0 及更早版本的完整变更记录。历史报告仅反映当时状态，不代表最终版本能力或仍在执行的计划。

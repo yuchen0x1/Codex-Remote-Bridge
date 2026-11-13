@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <title>最终版本与更新日志 · Codex Remote Bridge</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#fafaf8; --ink:#202827; --muted:#57615e; --line:#d9ded9; --accent:#22694b; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.85 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
+    main { max-width:860px; margin:auto; padding:40px max(24px,env(safe-area-inset-right)) 72px max(24px,env(safe-area-inset-left)); }
+    nav { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; margin-bottom:64px; font-size:14px; }
+    a { color:var(--accent); text-underline-offset:5px; }
+    a:focus-visible { outline:2px solid var(--accent); outline-offset:5px; }
+    .eyebrow { color:var(--accent); font-weight:650; letter-spacing:.06em; font-size:13px; }
+    h1 { font-size:clamp(32px,6vw,52px); letter-spacing:-.035em; line-height:1.25; margin:14px 0 18px; }
+    h2 { font-size:22px; margin:0 0 18px; line-height:1.4; }
+    p { margin:0 0 16px; }
+    .intro { max-width:650px; color:var(--muted); font-size:18px; }
+    .notice { margin:30px 0 42px; padding:20px 24px; border-left:3px solid var(--accent); background:color-mix(in srgb,var(--accent) 6%,var(--bg)); }
+    .notice p:last-child { margin:0; }
+    section { border-top:1px solid var(--line); padding:30px 0 10px; margin-top:20px; }
+    ul { padding-left:22px; margin:0 0 24px; }
+    li { padding-left:4px; margin-bottom:12px; }
+    code { font: .92em ui-monospace,monospace; overflow-wrap:anywhere; }
+    footer { border-top:1px solid var(--line); margin-top:40px; padding-top:24px; color:var(--muted); font-size:13px; }
+    @media (prefers-color-scheme:dark) { :root { --bg:#101613; --ink:#ebf0eb; --muted:#acb9ae; --line:#344039; --accent:#95d5b3; } }
+    @media (max-width:600px) { main { padding-top:24px; } nav { margin-bottom:42px; } .intro { font-size:16px; } .notice { padding:16px 18px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <nav aria-label="页面导航"><a href="./">← 返回控制页</a><span>Codex Remote Bridge</span></nav>
+    <header>
+      <div class="eyebrow">v4.2.0 · 2026.11.13 · FINAL RELEASE</div>
+      <h1>最终版本与更新日志</h1>
+      <p class="intro">让手机连接电脑上的 Codex。这个版本完成设备权限、连接稳定性和阅读体验的最后整理。</p>
+    </header>
+    <aside class="notice" aria-label="永久归档说明">
+      <p><strong>本项目永久停止维护。</strong></p>
+      <p>v4.2.0 为最终版本，发布后仓库转为只读归档。后续不再提供功能更新、兼容性适配或安全修复；源码、历史文档和已发布安装包保留供查阅与自行维护。</p>
+    </aside>
+    <section aria-labelledby="changes">
+      <h2 id="changes">本次更新</h2>
+      <ul>
+        <li><strong>设备与权限：</strong>新设备配对默认只读；在「设置 → 配置」查看并撤销会话。主令牌轮换同时让旧会话、未用配对码和实时连接失效。</li>
+        <li><strong>连接与调度：</strong>修复正常轮询误限流、配对二维码与电脑快捷控制请求失败；失败重试遵守上限，停用或删除计划后不再重试。</li>
+        <li><strong>阅读与布局：</strong>设置页调整导航栏宽、主题对比度、说明文字换行和手机触控间距，新增版本与归档入口。</li>
+        <li><strong>更新与数据：</strong>Windows 校验安装包大小和 SHA-256 后启动安装；Android/macOS 提供下载入口。自定义数据目录同时管理队列、日志和证书。</li>
+      </ul>
+    </section>
+    <section aria-labelledby="upgrade">
+      <h2 id="upgrade">升级前请阅读</h2>
+      <ul>
+        <li>曾分享旧格式 <code>主令牌:ro</code> 链接的用户，需要<strong>轮换主令牌并重新配对</strong>。</li>
+        <li>Android 使用本次发布的本地 Release 密钥。旧安装签名不同时无法覆盖安装，请先保留连接配置。</li>
+        <li>Windows 没有 Authenticode 签名；macOS 没有 Developer ID 签名与公证。更新清单未签名，SHA-256 仅用于核验文件完整性。</li>
+        <li>切换数据目录不会自动迁移旧数据。最终版本发布后不再跟进 Codex 或系统升级产生的兼容性变化。</li>
+      </ul>
+      <p><a href="https://github.com/yuchen0x1/Codex-Remote-Bridge/releases/tag/v4.2.0" rel="noreferrer">下载最终版本与校验文件 ↗</a></p>
+    </section>
+    <footer>本页随程序保存在本地，可在连接本机服务时阅读。<a href="https://github.com/yuchen0x1/Codex-Remote-Bridge/blob/main/CHANGELOG.md" rel="noreferrer">查看历史更新记录</a></footer>
+  </main>
+</body>
+</html>

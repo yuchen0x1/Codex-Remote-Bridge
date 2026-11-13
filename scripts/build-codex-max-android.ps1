@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 $androidProject = Join-Path $repoRoot 'android\CodexMax'
 $signingDir = Join-Path $androidProject 'signing'
-  $keystorePath = Join-Path $signingDir 'codex-remote-bridge-release.p12'
+$keystorePath = Join-Path $signingDir 'codex-remote-bridge-release.p12'
 $propertiesPath = Join-Path $androidProject 'release-signing.properties'
 
 function Get-KeytoolPath {
@@ -61,9 +61,13 @@ try {
 $apkPath = Join-Path $outputRoot 'outputs\apk\release\app-release.apk'
 if (-not (Test-Path -LiteralPath $apkPath)) { throw "Android release APK was not produced: $apkPath" }
 
-$sdkDirLine = Get-Content (Join-Path $androidProject 'local.properties') | Where-Object { $_ -match '^sdk\.dir=' } | Select-Object -First 1
-if (-not $sdkDirLine) { throw 'Android SDK path was not found in android/CodexMax/local.properties.' }
-$sdkDir = ($sdkDirLine -replace '^sdk\.dir=', '').Replace('\:', ':').Replace('\\', '\')
+$sdkDir = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { $env:ANDROID_SDK_ROOT }
+$localProperties = Join-Path $androidProject 'local.properties'
+if (Test-Path -LiteralPath $localProperties) {
+  $sdkDirLine = Get-Content -LiteralPath $localProperties | Where-Object { $_ -match '^sdk\.dir=' } | Select-Object -First 1
+  if ($sdkDirLine) { $sdkDir = ($sdkDirLine -replace '^sdk\.dir=', '').Replace('\:', ':').Replace('\\', '\') }
+}
+if (-not $sdkDir) { throw 'Set ANDROID_HOME / ANDROID_SDK_ROOT or sdk.dir in android/CodexMax/local.properties.' }
 $buildTools = Get-ChildItem (Join-Path $sdkDir 'build-tools') -Directory | Sort-Object { [Version]$_.Name } -Descending | Select-Object -First 1
 if (-not $buildTools) { throw 'Android SDK build-tools were not found.' }
 & (Join-Path $buildTools.FullName 'apksigner.bat') verify --verbose $apkPath

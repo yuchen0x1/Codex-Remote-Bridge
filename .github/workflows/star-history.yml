@@ -1,13 +1,10 @@
 name: Star History
 
-# 每天抓一次 stargazers，生成 docs/star-history.svg 并提交。
+# 项目已永久停止维护。仅保留手动重绘入口，关闭定时写入。
 # 说明：star-history.com 对 0 star 的仓库返回 403，README 会裂图，
 # 所以这里自建图表，不依赖第三方渲染服务。
 
 on:
-  schedule:
-    # UTC 01:17，避开整点排队高峰
-    - cron: '17 1 * * *'
   workflow_dispatch:
 
 concurrency:

@@ -2,6 +2,12 @@
 
 # 4.2.0 (2026-11-13)
 
+Final release. Permanently discontinued; the repository is archived after publication. No further feature, compatibility or security updates are planned.
+
+- UI: improve settings navigation width, theme contrast, wrapping descriptions and mobile touch targets; add a local release-notes page and archive information.
+- Docs: reorganize the README and documentation index, archive historical reports, and disable scheduled Star chart updates.
+- Build: move macOS CI to a supported runner and resolve Android SDK paths from standard environment variables.
+
 - Security: derive read-only credentials with a domain-separated HMAC; reject the old master-token suffix format. Previously shared suffix tokens require master-token rotation.
 - Security: token rotation revokes sessions, unused pairing codes and authenticated WebSockets; device sessions can be inspected and revoked individually.
 - Security: WebSocket sessions enforce same-origin browser access, authentication revalidation, frame/client limits and cleanup; PWA caches no longer store token/pair URLs.

@@ -1,5 +1,7 @@
 # Codex Remote Bridge 自主升级报告
 
+> 历史阶段记录：下文反映提交、发布前的状态。项目现已决定以 v4.2.0 收尾并永久归档；“后续”与优先级清单不再是维护计划。最终状态见 [归档说明](../ARCHIVE.md) 与 [发布说明](../releases/v4.2.0.md)。
+
 日期：2026-11-13（Asia/Shanghai）。起点：`main` / `8ced514`，工作区干净；版本 `4.1.0`，远程 `yuchen0x1/Codex-Remote-Bridge`。本轮变更留在本地，未提交、推送、改远程、发布或部署。没有修改真实用户会话、令牌或数据库。
 
 ## 1. 项目认知与完成范围
@@ -98,11 +100,11 @@ TLS 警告涉及 `PinnedTls.java` 中的自定义证书固定与首次配对宽�
 
 截图来自本轮真实运行的隔离实例：
 
-![桌面设备列表](screenshots/devices-desktop.png)
+![桌面设备列表](../screenshots/devices-desktop.png)
 
-![手机设备列表](screenshots/devices-mobile.png)
+![手机设备列表](../screenshots/devices-mobile.png)
 
-![手机配对权限](screenshots/pairing-mobile.png)
+![手机配对权限](../screenshots/pairing-mobile.png)
 
 截图中的地址/设备均为测试实例；本机回环地址不能作为真实手机局域网连接入口。
 
