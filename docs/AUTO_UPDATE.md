@@ -14,7 +14,7 @@ Codex Remote Bridge 使用 GitHub Releases 作为公开更新源。发布工作�
 
 ## 签名状态
 
-当前 manifest 会如实写入 `signatureStatus: "unsigned"`。仓库没有可验证的 Android keystore、Windows Authenticode 证书或 macOS Developer ID/notarization 凭据，因此不能声称数字签名已完成。
+当前 manifest 会如实写入 `signatureStatus: "unsigned"`，指清单本身未签名。v4.2.0 的 Android 包使用本地保管的 Release keystore 签名；Windows Authenticode 与 macOS Developer ID/notarization 尚未配置。APK 签名不等于清单签名，也不保证与历史 APK 的证书相同。
 
 GitHub Actions 支持通过以下 Secrets 配置 Android Release 签名：
 
@@ -23,7 +23,7 @@ GitHub Actions 支持通过以下 Secrets 配置 Android Release 签名：
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-缺少这些 Secrets 时，Android 构建仍会生成 APK，但发布必须视为未签名，不能用于覆盖已有签名的安装。
+缺少这些 Secrets 时，CI 只生成未签名 APK，并创建草稿 Release。发布者必须用受保护的本地 Release 密钥签名或替换为本地同源签名构建，验证 APK 签名后重新生成清单/校验和，再公开 Release。不能直接发布不可安装的未签名 APK。
 
 Windows 代码签名和 macOS Developer ID 签名/notarization 需要分别在 CI 中加入受保护的证书和公证凭据。私钥不能提交到仓库，也不能写入 manifest 或日志。
 
@@ -38,7 +38,8 @@ Windows 代码签名和 macOS Developer ID 签名/notarization 需要分别在 C
    git push origin v4.2.0
    ```
 
-4. Actions 会在创建 Release 前验证标签版本、运行测试，并要求 Android、Windows、macOS 三个平台都产出资产。已有同名 Release 不应被覆盖；需要修复后使用新的版本标签。
+4. 为新版本添加 `docs/releases/vMAJOR.MINOR.PATCH.md`。Actions 验证四端版本、运行测试，并要求 Android、Windows、macOS 都产出资产后创建草稿 Release。
+5. 下载草稿资产，核对版本、内容和签名；如 Android 在本地补签，更新 APK、`SHA256SUMS.txt` 和 `update-manifest.json`，全部校验后公开草稿。已公开的同名 Release 不覆盖；修复使用新的版本标签。
 
 ## 本地验证 manifest
 
@@ -55,6 +56,6 @@ Get-Content .tmp-release-assets\update-manifest.json
 ## 已知限制
 
 - 当前项目没有真实签名凭据；清单的 SHA-256 能检测传输损坏，但不能替代代码签名。
-- 本机没有 .NET 8、JDK 17、Android SDK、Xcode 和 macOS 构建环境，因此三端构建应以 GitHub Actions 结果为准。
+- 本地 Windows 可构建 Windows/Android；macOS 由 GitHub Actions 的 macOS runner 构建，真机安装仍需另行验收。
 - Windows 安装器由用户确认后启动；Android 和 macOS 不执行静默安装。
 - GitHub Release、Secrets、签名证书和商店权限属于外部资源，未配置前不能标记为正式发布完成。

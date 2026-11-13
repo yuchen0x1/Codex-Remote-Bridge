@@ -83,6 +83,8 @@ function syncLauncherToken(token) {
 
 function rotateAccessToken() {
   TOKEN = security.rotateToken();
+  pairingManager.revokeAll();
+  cdpWsHub.disconnectUnauthorized();
   return TOKEN;
 }
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -133,14 +135,14 @@ const sessionManager = new SessionManager({ logger, cookieSecure: USE_HTTPS });
 const pairingManager = new PairingManager({ logger });
 const security = new Security({ initialToken: TOKEN, appName: APP_NAME, store, sessionManager });
 const parser = new CodexSessionParser({ store });
-const persistentQueue = new PersistentQueue({ logger });
+const persistentQueue = new PersistentQueue({ logger, dbDir: path.join(STATE_DIR, 'db') });
 const scheduler = new Scheduler({
   store,
   codexAppServer,
   logger,
   logExecution: (threadId, action, status, durationMs, error, detail) => persistentQueue.logExecution(threadId, action, status, durationMs, error, detail),
 });
-const certManager = new CertificateManager();
+const certManager = new CertificateManager({ certDir: path.join(STATE_DIR, 'certs') });
 const cdpWsHub = new CdpWebSocketHub({ security, logger });
 
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
@@ -4917,7 +4919,11 @@ async function handleClientConfig(req, res) {
 
 async function handlePairingCode(req, res) {
   if (!isAuthorized(req)) return json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: '访问令牌不正确。' });
-  const scope = security.tokenScopeFromRequest(req);
+  const requestedScope = new URL(req.url, `http://${req.headers.host || 'localhost'}`).searchParams.get('scope');
+  if (requestedScope && !['read-only', 'read-write'].includes(requestedScope)) {
+    return json(res, 400, { ok: false, code: 'BAD_SCOPE', message: '无效的配对权限。' });
+  }
+  const scope = security.tokenScopeFromRequest(req) === 'read-only' || requestedScope === 'read-only' ? 'read-only' : 'read-write';
   const created = pairingManager.createPairingCode(scope);
   logger.info('pairing_code_created', { scope, expiresIn: Math.round((Date.parse(created.expiresAt) - Date.now()) / 1000) });
   return json(res, 200, {
@@ -5304,6 +5310,24 @@ async function handleRotateToken(req, res) {
     urls: getLanUrls(),
     message: '访问令牌已轮换，请使用新的链接重新连接。',
   });
+}
+
+async function handleSessions(req, res) {
+  if (!isAuthorized(req)) return json(res, 401, { ok: false, code: 'UNAUTHORIZED', message: '请重新连接。' });
+  if (security.tokenScopeFromRequest(req) === 'read-only') return json(res, 403, { ok: false, code: 'TOKEN_READ_ONLY', message: '只读设备不能管理其他设备。' });
+  if (req.method === 'GET') {
+    return json(res, 200, { ok: true, sessions: sessionManager.listSessions(security.sessionTokenFromRequest(req)) });
+  }
+  let payload;
+  try { payload = JSON.parse(await readBody(req) || '{}'); } catch {
+    return json(res, 400, { ok: false, code: 'BAD_REQUEST', message: '请求格式不正确。' });
+  }
+  if (!payload || typeof payload.id !== 'string' || !/^[a-f0-9-]{36}$/.test(payload.id)) {
+    return json(res, 400, { ok: false, code: 'BAD_SESSION_ID', message: '无效的设备会话。' });
+  }
+  const revoked = sessionManager.revokeById(payload.id);
+  cdpWsHub.disconnectUnauthorized();
+  return json(res, 200, { ok: true, revoked });
 }
 
 function handleHistoryAttachment(req, res) {
@@ -5767,6 +5791,8 @@ const apiRouteTable = [
   { method: 'GET', prefix: '/codex/clipboard', handler: handleClipboardRead },
   { method: 'POST', prefix: '/codex/clipboard', handler: handleClipboardWrite },
   { method: 'GET', prefix: '/codex/pairing-code', handler: handlePairingCode },
+  { method: 'GET', prefix: '/codex/sessions', handler: handleSessions },
+  { method: 'POST', prefix: '/codex/sessions', handler: handleSessions },
   { method: 'POST', prefix: '/codex/pair', handler: handlePair },
 ];
 

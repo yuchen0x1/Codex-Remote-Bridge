@@ -107,10 +107,10 @@ jobs:
 
       - name: Build (Release)
         run: |
-          # 工程未提供共享 scheme，按 target 构建
+          # Xcode automatically creates a scheme for the application target.
           xcodebuild \
             -project macos/CodexMini/CodexMini.xcodeproj \
-            -target "Codex Remote Bridge" \
+            -scheme "Codex Remote Bridge" \
             -configuration Release \
             -derivedDataPath /tmp/codexmini-derived \
             CODE_SIGNING_ALLOWED=NO \

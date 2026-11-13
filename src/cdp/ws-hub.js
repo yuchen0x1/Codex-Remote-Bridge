@@ -5,7 +5,6 @@
  * 为手机端提供 WebSocket 长连接，实时推送 CDP 状态变化和 Codex 会话事件
  */
 
-const { URL } = require('url');
 const { getCdpConnection } = require('./connection');
 
 // 简易 WebSocket 帧编解码（用于服务端→客户端推送，服务端不需要掩码）
@@ -31,6 +30,8 @@ function decodeWsFrameClient(buffer) {
   if (buffer.length < 2) return null;
   const second = buffer[1];
   const masked = Boolean(second & 0x80);
+  const opcode = buffer[0] & 0x0f;
+  if (!masked || !(buffer[0] & 0x80) || (buffer[0] & 0x70) || ![1, 8, 9, 10].includes(opcode)) throw new Error('Invalid WebSocket frame');
   let length = second & 0x7f;
   let headerLength = 2;
   if (length === 126) {
@@ -42,6 +43,7 @@ function decodeWsFrameClient(buffer) {
     length = Number(buffer.readBigUInt64BE(2));
     headerLength = 10;
   }
+  if (!Number.isSafeInteger(length) || length > MAX_CLIENT_FRAME_BYTES || (opcode >= 8 && length > 125)) throw new Error('WebSocket frame too large');
   const maskOffset = headerLength;
   const payloadOffset = maskOffset + (masked ? 4 : 0);
   const frameEnd = payloadOffset + length;
@@ -53,17 +55,19 @@ function decodeWsFrameClient(buffer) {
     for (let i = 0; i < payload.length; i += 1) unmasked[i] = payload[i] ^ mask[i % 4];
     payload = unmasked;
   }
-  return { text: payload.toString('utf8'), consumed: frameEnd };
+  return { text: payload.toString('utf8'), payload, opcode, consumed: frameEnd };
 }
 
 // 慢客户端背压阈值：写入缓冲超过该值时断开，防止内存无限增长（状态推送可容忍丢失，客户端会重连）
 const MAX_BACKPRESSURE_BYTES = 512 * 1024;
+const MAX_CLIENT_FRAME_BYTES = 64 * 1024;
 
 class CdpWebSocketHub {
   constructor(options = {}) {
     this.security = options.security;
     this.logger = options.logger || console;
     this.clients = new Set(); // Set<net.Socket>
+    this.clientRequests = new Map();
     this.cdpConnection = null;
     this.lastStatus = null;
     this._lastStatusText = null;
@@ -85,11 +89,23 @@ class CdpWebSocketHub {
   }
 
   stop() {
-    this._stopPollingIfIdle();
     for (const client of this.clients) {
-      try { client.end(); } catch {}
+      client.destroy();
     }
     this.clients.clear();
+    this.clientRequests.clear();
+    this._stopPollingIfIdle();
+  }
+
+  disconnectUnauthorized() {
+    for (const socket of this.clients) {
+      if (!this.security?.isAuthorized(this.clientRequests.get(socket))) {
+        socket.destroy();
+        this.clients.delete(socket);
+        this.clientRequests.delete(socket);
+      }
+    }
+    this._stopPollingIfIdle();
   }
 
   _ensurePolling() {
@@ -108,6 +124,7 @@ class CdpWebSocketHub {
   }
 
   async _pollAndBroadcast() {
+    this.disconnectUnauthorized();
     if (!this.cdpConnection) return;
     const probe = await this.cdpConnection.probe();
     const status = { ...probe, polledAt: new Date().toISOString() };
@@ -124,17 +141,26 @@ class CdpWebSocketHub {
 
   async handleUpgrade(req, socket, head) {
     // 鉴权
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    const token = url.searchParams.get('token') || req.headers['x-mobile-typer-token'];
-    if (!this.security || token !== this.security.getToken()) {
+    if (!this.security?.isAuthorized(req)) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }
 
+    // Browser cookies are accepted only from this exact origin. Native clients may omit Origin.
+    const expectedOrigin = `${req.socket?.encrypted ? 'https' : 'http'}://${req.headers.host}`;
+    if (req.headers.origin && req.headers.origin !== expectedOrigin) {
+      socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+      return;
+    }
+    if (this.clients.size >= 64) {
+      socket.end('HTTP/1.1 503 Service Unavailable\r\n\r\n');
+      return;
+    }
+
     // WebSocket 握手
     const key = req.headers['sec-websocket-key'];
-    if (!key) {
+    if (!/^[A-Za-z0-9+/]{22}==$/.test(key || '') || req.headers['sec-websocket-version'] !== '13') {
       socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
       socket.destroy();
       return;
@@ -150,7 +176,7 @@ class CdpWebSocketHub {
       '',
     ].join('\r\n'));
 
-    this._addClient(socket);
+    this._addClient(socket, req, head);
 
     // 发送当前状态
     if (this.lastStatus) {
@@ -167,17 +193,28 @@ class CdpWebSocketHub {
     }
   }
 
-  _addClient(socket) {
+  _addClient(socket, req, head) {
     this.clients.add(socket);
+    this.clientRequests.set(socket, req);
     this._ensurePolling();
     let buffer = Buffer.alloc(0);
 
     socket.on('data', chunk => {
+      if (!this.security.isAuthorized(req) || buffer.length + chunk.length > MAX_CLIENT_FRAME_BYTES + 14) {
+        socket.destroy();
+        return;
+      }
       buffer = Buffer.concat([buffer, chunk]);
       while (buffer.length >= 2) {
-        const frame = decodeWsFrameClient(buffer);
+        let frame;
+        try { frame = decodeWsFrameClient(buffer); } catch { socket.destroy(); return; }
         if (!frame) break;
         buffer = buffer.subarray(frame.consumed);
+        if (frame.opcode === 8) { socket.end(Buffer.from([0x88, 0])); return; }
+        if (frame.opcode === 9) {
+          socket.write(Buffer.concat([Buffer.from([0x8a, frame.payload.length]), frame.payload]));
+          continue;
+        }
         // 处理客户端消息（心跳 ping 等）
         try {
           const msg = JSON.parse(frame.text);
@@ -190,23 +227,29 @@ class CdpWebSocketHub {
 
     socket.on('close', () => {
       this.clients.delete(socket);
+      this.clientRequests.delete(socket);
       this._stopPollingIfIdle();
       this.logger.debug('ws_client_disconnected', { clients: this.clients.size });
     });
 
     socket.on('error', () => {
       this.clients.delete(socket);
+      this.clientRequests.delete(socket);
       this._stopPollingIfIdle();
     });
 
     this.logger.debug('ws_client_connected', { clients: this.clients.size });
+    if (head?.length) socket.emit('data', head);
   }
 
   _sendToClient(socket, message) {
+    this.disconnectUnauthorized();
     if (socket.destroyed || !socket.writable) return;
     if (socket.writableLength > MAX_BACKPRESSURE_BYTES) {
-      try { socket.end(); } catch {}
+      socket.destroy();
       this.clients.delete(socket);
+      this.clientRequests.delete(socket);
+      this._stopPollingIfIdle();
       return;
     }
     try {
@@ -217,20 +260,24 @@ class CdpWebSocketHub {
   }
 
   broadcast(message) {
+    this.disconnectUnauthorized();
     const frame = encodeWsFrameServer(JSON.stringify(message));
     for (const socket of this.clients) {
       if (socket.destroyed || !socket.writable) {
         this.clients.delete(socket);
+        this.clientRequests.delete(socket);
         continue;
       }
       // 慢客户端背压保护：写入缓冲过大时断开，防止内存无限增长
       if (socket.writableLength > MAX_BACKPRESSURE_BYTES) {
-        try { socket.end(); } catch {}
+        socket.destroy();
         this.clients.delete(socket);
+        this.clientRequests.delete(socket);
         continue;
       }
-      try { socket.write(frame); } catch { this.clients.delete(socket); }
+      try { socket.write(frame); } catch { socket.destroy(); this.clients.delete(socket); this.clientRequests.delete(socket); }
     }
+    this._stopPollingIfIdle();
   }
 
   getClientCount() {

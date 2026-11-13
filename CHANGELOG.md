@@ -1,6 +1,14 @@
 # Changelog
 
-# Unreleased
+# 4.2.0 (2026-11-13)
+
+- Security: derive read-only credentials with a domain-separated HMAC; reject the old master-token suffix format. Previously shared suffix tokens require master-token rotation.
+- Security: token rotation revokes sessions, unused pairing codes and authenticated WebSockets; device sessions can be inspected and revoked individually.
+- Security: WebSocket sessions enforce same-origin browser access, authentication revalidation, frame/client limits and cleanup; PWA caches no longer store token/pair URLs.
+- Fix: cookie-authenticated polling receives authenticated rate limits; custom state directories contain queue/log/certificate files.
+- Fix: scheduled retries retain their count, stop at their budget, tolerate deletion/disable during failure, and use cron/timezone rules when re-enabled.
+- UI: default new Web pairing to read-only with an explicit scope selector; fix duplicate API URL construction that broke pairing and system-control requests.
+- Dev: portable HTTP startup, inline-script syntax checks and behavior regressions for security and scheduling.
 
 - Feat: add GitHub Releases update manifest generation with SHA-256 asset checksums.
 - Feat: Windows checks GitHub releases, downloads to a temporary file, verifies size and SHA-256, and starts the installer only after verification.

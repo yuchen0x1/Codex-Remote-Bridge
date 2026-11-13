@@ -46,6 +46,7 @@ jobs:
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]
           [[ "$tag" == "$package_version" ]]
           echo "Release version: $package_version"
+          node scripts/check-release-version.js "$RELEASE_TAG"
 
       - name: Syntax check all modules
         run: npm run check
@@ -251,9 +252,10 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
-          generate_release_notes: true
+          body_path: docs/releases/${{ env.RELEASE_TAG }}.md
           files: release-assets/*
-          draft: false
+          # Publish explicitly after verifying assets and Android signing.
+          draft: true
           prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
           fail_on_unmatched_files: true
           overwrite_files: false

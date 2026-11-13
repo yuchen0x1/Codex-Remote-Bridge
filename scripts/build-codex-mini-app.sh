@@ -58,18 +58,13 @@ mkdir -p "$EMBEDDED_PROJECT_DIR" "$EMBEDDED_NODE_DIR"
 # Keep the app-managed service payload current while avoiding recursive macOS
 # project/build output and user/runtime-private data.
 /usr/bin/rsync -a --delete --delete-excluded \
-  --exclude '.git' \
-  --exclude '.DS_Store' \
-  --exclude '.gitattributes' \
-  --exclude 'logs' \
-  --exclude 'output' \
-  --exclude 'dist' \
-  --exclude '.build' \
-  --exclude 'DerivedData' \
-  --exclude 'node_modules' \
-  --exclude 'tmp-*' \
-  --exclude '*.log' \
-  --exclude 'macos' \
+  --include '/server.js' \
+  --include '/package.json' \
+  --include '/LICENSE' \
+  --include '/src/***' \
+  --include '/public/***' \
+  --include '/bin/***' \
+  --exclude '*' \
   "$PROJECT_DIR/" "$EMBEDDED_PROJECT_DIR/"
 
 if true; then

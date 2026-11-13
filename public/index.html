@@ -4340,6 +4340,12 @@
       text-align: center;
     }
     .pairing-card h3 { margin: 0 0 12px; font-size: 16px; }
+    #pairing-scope { display: block; width: 100%; margin: 8px 0 12px; padding: 10px; border-radius: 8px; color: var(--text); background: var(--composer-bg, #202020); border: 1px solid var(--line, #777); }
+    #pairing-scope:focus-visible { outline: 2px solid var(--accent, #8ef0b7); outline-offset: 2px; }
+    .device-session-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+    .device-sessions .workspace-row-detail { white-space: normal; overflow-wrap: anywhere; }
+    .device-sessions .workspace-row-action:disabled { cursor: default; }
+    .device-sessions .workspace-row-action:focus-visible { outline: 2px solid var(--accent, #8ef0b7); outline-offset: 2px; }
     .pairing-qr {
       width: 220px;
       height: 220px;
@@ -4863,6 +4869,11 @@
       <div class="pairing-card" role="dialog" aria-modal="true" aria-label="配对二维码">
         <h3>手机配对</h3>
         <div class="pairing-qr" id="pairing-qr">正在生成二维码…</div>
+        <label for="pairing-scope">新设备权限</label>
+        <select id="pairing-scope" aria-label="新设备权限">
+          <option value="read-only">只读：查看任务与回复</option>
+          <option value="read-write">读写：允许控制电脑</option>
+        </select>
         <p class="pairing-address" id="pairing-address"></p>
         <p class="pairing-hint" id="pairing-hint" style="font-size:11px;color:var(--faint);margin:0 0 12px;"></p>
         <div class="pairing-actions">
@@ -5217,6 +5228,9 @@
     let voiceReadEnabled = localStorage.getItem(VOICE_READ_STORAGE_KEY) === '1';
     let notifyCompleteEnabled = localStorage.getItem(NOTIFY_COMPLETE_STORAGE_KEY) === '1';
     let webhookConfig = { webhook: '', enabled: false, signed: false, needsSecret: false };
+    let deviceSessions = null;
+    let deviceSessionsBusy = false;
+    let deviceSessionsError = '';
     let webhookConfigLoading = false;
     let webhookConfigLoaded = false;
     let webhookConfigError = '';
@@ -5583,20 +5597,20 @@
         return false;
       }
     }
-    async function pairingAddressCandidate() {
+    async function pairingAddressCandidate(scope = 'read-only') {
       // 优先申请一次性配对码：新设备扫码后用 ?pair= 兑换 HttpOnly 会话，URL 不再携带长期令牌
       try {
-        const response = await fetchApi(apiUrl('/codex/pairing-code'), { cache: 'no-store', apiTimeoutMs: 8000 });
+        const response = await fetchApi(`/codex/pairing-code?scope=${encodeURIComponent(scope)}`, { cache: 'no-store', apiTimeoutMs: 8000 });
         const data = await response.json().catch(() => ({}));
         if (response.ok && data.ok && /^\d{6}$/.test(String(data.code || ''))) {
           const pairUrl = new URL(location.href);
           pairUrl.search = '';
           pairUrl.hash = '';
           pairUrl.searchParams.set('pair', data.code);
-          return { address: pairUrl.toString(), hint: `一次性配对码 ${data.code} · 90 秒内有效 · 用后即废` };
+          return { address: pairUrl.toString(), hint: `${data.scope === 'read-only' ? '只读' : '读写'} · 一次性配对码 ${data.code} · 90 秒内有效 · 用后即废` };
         }
       } catch {}
-      return { address: mobileConnectionAddress(), hint: '当前连接方式会在地址中携带访问令牌，建议在已连接设备上生成配对码' };
+      throw new Error('生成配对码失败，请检查连接后重试。');
     }
     async function openPairingQrModal() {
       const modal = document.getElementById('pairing-modal');
@@ -5605,13 +5619,28 @@
       const hintBox = document.getElementById('pairing-hint');
       if (!modal) return;
       modal.hidden = false;
+      const scopeSelect = document.getElementById('pairing-scope');
+      scopeSelect.disabled = isReadOnlyMode();
+      if (isReadOnlyMode()) scopeSelect.value = 'read-only';
       qrBox.textContent = '正在生成二维码…';
+      addressBox.textContent = '';
+      const copyButton = document.getElementById('pairing-copy');
+      copyButton.disabled = true;
       if (hintBox) hintBox.textContent = '';
-      const { address, hint } = await pairingAddressCandidate();
-      addressBox.textContent = address;
-      if (hintBox) hintBox.textContent = hint;
-      if (!renderPairingQr(qrBox, address)) return;
+      const generation = ++pairingGeneration;
+      try {
+        const { address, hint } = await pairingAddressCandidate(scopeSelect.value);
+        if (generation !== pairingGeneration || modal.hidden) return;
+        addressBox.textContent = address;
+        if (hintBox) hintBox.textContent = hint;
+        copyButton.disabled = false;
+        renderPairingQr(qrBox, address);
+      } catch (error) {
+        if (generation === pairingGeneration) qrBox.textContent = error.message;
+      }
     }
+    let pairingGeneration = 0;
+    document.getElementById('pairing-scope')?.addEventListener('change', openPairingQrModal);
     function closePairingQrModal() {
       const modal = document.getElementById('pairing-modal');
       if (modal) modal.hidden = true;
@@ -9237,6 +9266,81 @@ function addDetails(message, steps = [], liveUpdate = false) {
       return '圆环';
     }
 
+    async function loadDeviceSessions() {
+      if (deviceSessionsBusy) return;
+      deviceSessionsBusy = true;
+      deviceSessionsError = '';
+      try {
+        const response = await fetchApi('/codex/sessions', { cache: 'no-store', apiTimeoutMs: 8000 });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.message || '读取设备失败');
+        deviceSessions = data.sessions;
+      } catch (error) {
+        deviceSessionsError = error.message || '读取设备失败，请刷新重试。';
+      } finally {
+        deviceSessionsBusy = false;
+        if (activeWorkspace === 'settings') renderWorkspace();
+      }
+    }
+
+    async function revokeDeviceSession(session) {
+      if (deviceSessionsBusy || !window.confirm(`撤销“${session.deviceName}”的会话？该设备需要重新配对。`)) return;
+      deviceSessionsBusy = true;
+      deviceSessionsError = '';
+      renderWorkspace();
+      try {
+        const response = await fetchApi('/codex/sessions', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id: session.id }), apiTimeoutMs: 8000,
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.message || '撤销失败');
+        deviceSessions = deviceSessions.filter(item => item.id !== session.id);
+        setNotice('设备会话已撤销', 'ok');
+      } catch (error) {
+        deviceSessionsError = error.message || '撤销失败，请重试。';
+      } finally {
+        deviceSessionsBusy = false;
+        if (activeWorkspace === 'settings') renderWorkspace();
+      }
+    }
+
+    function renderDeviceSessionsSection(parent) {
+      const section = workspaceElement('section', 'workspace-section');
+      section.setAttribute('aria-label', '已连接设备');
+      section.classList.add('device-sessions');
+      section.setAttribute('aria-busy', String(deviceSessionsBusy));
+      section.appendChild(workspaceElement('h2', 'workspace-section-title', '已连接设备'));
+      section.appendChild(workspaceElement('p', 'workspace-hint', '会话最长有效 24 小时，服务重启后需重新连接。撤销会话后，持有主令牌的设备仍可重新登录；疑似令牌泄露时请在电脑端轮换令牌。'));
+      if (isReadOnlyMode()) {
+        section.appendChild(workspaceState('只读设备不能查看或管理其他设备。'));
+      } else {
+        if (deviceSessions === null && !deviceSessionsError && !deviceSessionsBusy) loadDeviceSessions();
+        const actions = workspaceElement('div', 'device-session-actions');
+        actions.appendChild(workspaceActionButton(deviceSessionsBusy ? '正在刷新…' : '刷新设备', () => {
+          loadDeviceSessions(); renderWorkspace();
+        }, { disabled: deviceSessionsBusy }));
+        actions.appendChild(workspaceActionButton('配对新设备', openPairingQrModal));
+        section.appendChild(actions);
+        if (deviceSessionsError) {
+          const error = workspaceElement('p', 'workspace-error', deviceSessionsError);
+          error.setAttribute('role', 'alert');
+          section.appendChild(error);
+        }
+        const list = workspaceElement('div', 'workspace-list');
+        for (const session of deviceSessions || []) {
+          list.appendChild(workspaceListRow({
+            title: `${session.current ? '当前设备 · ' : ''}${session.deviceName}`,
+            detail: `${session.scope === 'read-only' ? '只读' : '读写'} · 最近访问 ${new Date(session.lastSeenAt).toLocaleString()} · 到期 ${new Date(session.expiresAt).toLocaleString()}`,
+            metaNode: workspaceActionButton(session.current ? '当前会话' : '撤销', () => revokeDeviceSession(session), { disabled: session.current || deviceSessionsBusy }),
+          }));
+        }
+        section.appendChild(list);
+        if (deviceSessions?.length === 0) section.appendChild(workspaceState('暂无有效设备会话。'));
+      }
+      parent.appendChild(section);
+    }
+
     function renderWebhookSettingsSection(parent) {
       if (!webhookConfigLoaded && !webhookConfigLoading) loadWebhookConfig();
       const section = workspaceElement('section', 'workspace-section');
@@ -9455,6 +9559,7 @@ function addDetails(message, steps = [], liveUpdate = false) {
             { title: 'CDP 状态', detail: health.cdp ? (health.cdp.available ? `端口 ${health.cdp.port || 9222}` : (health.cdp.message || '未连接')) : '—', meta: health.cdp?.available ? '可用' : '离线' },
           ], content);
           renderWebhookSettingsSection(content);
+          renderDeviceSessionsSection(content);
         },
         personalization: () => appendSettingsSection('个性化', [
           { title: t('language'), detail: t('languageDetail'), metaNode: workspaceActionButton(t('languageValue'), toggleUiLanguage) },
@@ -9615,7 +9720,7 @@ function addDetails(message, steps = [], liveUpdate = false) {
         triggerHaptic(40);
         if (!confirm('确定要让电脑立即锁屏吗？')) return;
         try {
-          const res = await fetchApi(apiUrl('/codex/system/control'), {
+          const res = await fetchApi('/codex/system/control', {
             method: 'POST',
             body: JSON.stringify({ action: 'lock-screen' }),
           });

@@ -43,7 +43,8 @@ if (-not $InnoCompiler -or -not (Test-Path -LiteralPath $InnoCompiler)) {
 }
 
 New-Item -ItemType Directory -Force -Path $installerDir | Out-Null
-& $InnoCompiler (Join-Path $repoRoot 'windows\installer\CodexMini.iss')
+$releaseVersion = (Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json).version
+& $InnoCompiler "/DMyAppVersion=$releaseVersion" (Join-Path $repoRoot 'windows\installer\CodexMini.iss')
 if ($LASTEXITCODE -ne 0) {
   throw "Inno Setup failed with exit code $LASTEXITCODE"
 }

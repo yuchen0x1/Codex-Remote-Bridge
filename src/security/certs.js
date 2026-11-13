@@ -11,8 +11,6 @@ const os = require('os');
 const crypto = require('crypto');
 
 const CERT_DIR = path.join(os.homedir(), '.codex-max', 'certs');
-const CERT_FILE = path.join(CERT_DIR, 'cert.pem');
-const KEY_FILE = path.join(CERT_DIR, 'key.pem');
 const CERT_VALIDITY_DAYS = 365;
 const CERT_EC_CURVE = 'secp384r1';
 
@@ -141,8 +139,8 @@ function safeCertSubjectName(value) {
 class CertificateManager {
   constructor(options = {}) {
     this.certDir = options.certDir || CERT_DIR;
-    this.certFile = options.certFile || CERT_FILE;
-    this.keyFile = options.keyFile || KEY_FILE;
+    this.certFile = options.certFile || path.join(this.certDir, 'cert.pem');
+    this.keyFile = options.keyFile || path.join(this.certDir, 'key.pem');
   }
 
   /**

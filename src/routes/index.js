@@ -216,7 +216,7 @@ class Router {
     // 限流：静态资源不参与；健康检查豁免；按 read/write/anon 分档连续补充。
     if (this.security) {
       const presentedToken = getTokenFromRequest(req);
-      const authorized = Boolean(presentedToken) && typeof this.security.isAuthorized === 'function'
+      const authorized = typeof this.security.isAuthorized === 'function'
         ? this.security.isAuthorized(req)
         : Boolean(presentedToken);
       let kind = 'api';
@@ -226,7 +226,8 @@ class Router {
       const isHealth = pathname === '/codex/health';
       if (kind !== 'static' && !isHealth) {
         const ip = getClientIp(req);
-        const verdict = this.security.rateLimitCheck(ip, presentedToken, kind);
+        const sessionToken = this.security.sessionTokenFromRequest?.(req) || '';
+        const verdict = this.security.rateLimitCheck(ip, authorized ? (sessionToken || presentedToken) : '', kind);
         if (!verdict.allowed) {
           this.logger.warn('rate_limited', { ip, path: pathname, kind });
           const retryAfter = String(verdict.retryAfterSeconds || 1);

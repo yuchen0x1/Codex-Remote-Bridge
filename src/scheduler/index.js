@@ -211,7 +211,7 @@ class Scheduler {
       enabled,
       updatedAt: new Date().toISOString(),
       nextRunAt: enabled
-        ? new Date(Date.now() + state.scheduledTasks[index].intervalMinutes * 60000).toISOString()
+        ? nextScheduledRunAt({ ...state.scheduledTasks[index], nextRunAt: '' })
         : state.scheduledTasks[index].nextRunAt,
     });
     this._writeState(state);
@@ -278,7 +278,6 @@ class Scheduler {
         updatedAt: new Date().toISOString(),
         lastStatus: 'running',
         lastMessage: '',
-        retryCount: 0,
       }));
 
       const result = await this.codexAppServer.sendTurn({
@@ -302,12 +301,14 @@ class Scheduler {
     } catch (error) {
       const errorMsg = truncateText(error?.message || String(error), 500);
       const currentTask = this.getTasks().find(t => t.id === id);
+      // The user can delete/disable a schedule while its asynchronous request is in flight.
+      if (!currentTask || !currentTask.enabled) return null;
       const retryAttempt = (currentTask?.retryCount || 0);
       logRun('failed', errorMsg, { taskId: id, retryAttempt });
 
       // 检查是否应该重试
-      if (shouldRetryTask(currentTask || task, retryAttempt)) {
-        const delayMs = getRetryDelayForTask(currentTask || task, retryAttempt);
+      if (shouldRetryTask(currentTask, retryAttempt)) {
+        const delayMs = getRetryDelayForTask(currentTask, retryAttempt);
         const retryAt = new Date(Date.now() + delayMs).toISOString();
         this.logger?.warn?.('schedule_retry', { id, attempt: retryAttempt + 1, delayMs, error: errorMsg });
         return this._updateTaskState(id, current => ({

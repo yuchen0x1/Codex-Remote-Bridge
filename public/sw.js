@@ -5,7 +5,7 @@
  * 只处理同源 GET 静态资源，API 请求一律不拦截。
  */
 
-const CACHE_NAME = 'codex-remote-bridge-v1';
+const CACHE_NAME = 'codex-remote-bridge-v2';
 
 const PRECACHE_URLS = [
   '.',
@@ -25,7 +25,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key.startsWith('codex-remote-bridge-') && key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
@@ -36,6 +36,8 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  // Never persist connection credentials or one-time pairing codes as cache keys.
+  if (url.searchParams.has('token') || url.searchParams.has('pair')) return;
   if (url.pathname.startsWith('/codex/') || url.pathname.startsWith('/send') || url.pathname.startsWith('/upload')) return;
 
   event.respondWith(

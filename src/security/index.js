@@ -58,6 +58,7 @@ class Security {
 
   rotateToken() {
     this.token = crypto.randomBytes(12).toString('base64url');
+    this.sessionManager?.revokeAll();
     if (this.store) {
       this.store.persistToken(this.token);
       this.store.syncLauncherToken(this.token);
@@ -65,9 +66,16 @@ class Security {
     return this.token;
   }
 
-  /** 只读 token：主 token 加 `:ro` 后缀派生（严格弱于主 token，泄露不升级）。 */
+  /** Domain-separated HMAC: a shared read credential must never contain the master token. */
   readOnlyToken() {
-    return this.token ? `${this.token}:ro` : '';
+    return this.token ? `ro_${crypto.createHmac('sha256', this.token).update('codex-remote-bridge:read-only:v1').digest('base64url')}` : '';
+  }
+
+  _tokenEquals(presented, expected) {
+    if (!presented || !expected) return false;
+    const a = Buffer.from(presented);
+    const b = Buffer.from(expected);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
   }
 
   _presentedToken(req) {
@@ -104,7 +112,7 @@ class Security {
   isAuthorized(req) {
     if (this.sessionFromRequest(req)) return true;
     const presented = this._presentedToken(req);
-    return presented === this.token || presented === this.readOnlyToken();
+    return this._tokenEquals(presented, this.token) || this._tokenEquals(presented, this.readOnlyToken());
   }
 
   _parseCookies(header) {

@@ -96,6 +96,10 @@ class PairingManager {
     return this.codes.size;
   }
 
+  revokeAll() {
+    this.codes.clear();
+  }
+
   cleanup() {
     const now = Date.now();
     for (const [key, record] of this.codes) {

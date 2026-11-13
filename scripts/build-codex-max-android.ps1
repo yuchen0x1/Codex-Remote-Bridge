@@ -46,7 +46,7 @@ if (-not (Test-Path -LiteralPath $propertiesPath)) {
   ) | Set-Content -LiteralPath $propertiesPath -Encoding ASCII
 }
 
-$outputRoot = 'C:\CodexBuild\AndroidOutput'
+$outputRoot = if ($env:CODEX_MAX_ANDROID_BUILD_DIR) { $env:CODEX_MAX_ANDROID_BUILD_DIR } else { Join-Path $repoRoot 'output\android-release' }
 $previousOutputRoot = $env:CODEX_MAX_ANDROID_BUILD_DIR
 $env:CODEX_MAX_ANDROID_BUILD_DIR = $outputRoot
 try {

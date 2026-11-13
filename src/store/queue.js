@@ -11,8 +11,6 @@ const path = require('path');
 const os = require('os');
 
 const DB_DIR = path.join(os.homedir(), '.codex-max', 'db');
-const QUEUE_FILE = path.join(DB_DIR, 'operation-queue.json');
-const LOG_FILE = path.join(DB_DIR, 'execution-log.json');
 const MAX_LOG_ENTRIES = 5000;
 const MAX_QUEUE_SIZE = 1000;
 
@@ -23,8 +21,8 @@ try { Database = require('better-sqlite3'); } catch {}
 class PersistentQueue {
   constructor(options = {}) {
     this.dbDir = options.dbDir || DB_DIR;
-    this.queueFile = options.queueFile || QUEUE_FILE;
-    this.logFile = options.logFile || LOG_FILE;
+    this.queueFile = options.queueFile || path.join(this.dbDir, 'operation-queue.json');
+    this.logFile = options.logFile || path.join(this.dbDir, 'execution-log.json');
     this.logger = options.logger || console;
 
     this._queue = [];

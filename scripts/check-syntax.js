@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const vm = require('vm');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -36,6 +37,14 @@ const targets = [
 ];
 
 let failures = 0;
+const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+let inlineScripts = 0;
+for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+  if (/\bsrc\s*=/.test(match[1]) || !match[2].trim()) continue;
+  inlineScripts++;
+  try { new vm.Script(match[2], { filename: `public/index.html:inline-${inlineScripts}` }); }
+  catch (error) { failures++; process.stderr.write(`${error.stack}\n`); }
+}
 for (const file of targets) {
   const result = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
   if (result.status !== 0) {
@@ -49,4 +58,4 @@ if (failures) {
   process.stderr.write(`\n语法检查失败：${failures}/${targets.length} 个文件\n`);
   process.exit(1);
 }
-console.log(`语法检查通过：${targets.length} 个文件`);
+console.log(`语法检查通过：${targets.length} 个文件，${inlineScripts} 个内联脚本`);

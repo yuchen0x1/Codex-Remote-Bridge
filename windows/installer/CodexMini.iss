@@ -1,5 +1,7 @@
 #define MyAppName "Codex Remote Bridge"
-#define MyAppVersion "3.1.1-win"
+#ifndef MyAppVersion
+  #define MyAppVersion "4.2.0"
+#endif
 #define MyAppPublisher "Coming Rain"
 #define MyAppExeName "Codex Remote Bridge.exe"
 

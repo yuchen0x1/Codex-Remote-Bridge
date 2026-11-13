@@ -12,6 +12,7 @@ function hashToken(token) {
 
 function publicSession(record) {
   return {
+    id: record.id,
     deviceName: record.deviceName,
     createdAt: record.createdAt,
     expiresAt: record.expiresAt,
@@ -40,6 +41,7 @@ class SessionManager {
       .trim()
       .slice(0, 80) || '未命名设备';
     const record = {
+      id: crypto.randomUUID(),
       tokenHash: hashToken(token),
       deviceName: normalizedDeviceName,
       createdAt: new Date(now).toISOString(),
@@ -84,6 +86,21 @@ class SessionManager {
 
   revokeAll() {
     this.sessions.clear();
+  }
+
+  listSessions(currentToken = '') {
+    this.cleanup();
+    const currentHash = hashToken(currentToken);
+    return [...this.sessions.values()].map(record => ({
+      ...publicSession(record), current: record.tokenHash === currentHash,
+    })).sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
+  }
+
+  revokeById(id) {
+    for (const [key, record] of this.sessions) {
+      if (record.id === id) return this.sessions.delete(key);
+    }
+    return false;
   }
 
   cleanup() {

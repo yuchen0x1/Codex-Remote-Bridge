@@ -65,6 +65,7 @@ Remove-Item -LiteralPath $payloadTemp -Recurse -Force
 
 $project = Join-Path $repoRoot 'windows\CodexMini\CodexMiniWin.csproj'
 $publishArgs = @('publish', $project, '-c', 'Release', '-r', 'win-x64', '--self-contained', $(if ($SelfContained -or $SingleExe) { 'true' } else { 'false' }), '-o', $OutputDir)
+$publishArgs += @('/p:DebugType=None', '/p:DebugSymbols=false')
 if ($SingleExe) {
   $publishArgs += @('/p:PublishSingleFile=true', '/p:IncludeNativeLibrariesForSelfExtract=true', '/p:EnableCompressionInSingleFile=true')
 }

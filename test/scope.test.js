@@ -26,7 +26,8 @@ function mockReq(url = '/', headers = {}) {
 test('P2-3: Security 派生只读 token 并正确判定 scope', () => {
   const security = new Security({ initialToken: TOKEN });
   try {
-    assert.equal(security.readOnlyToken(), `${TOKEN}:ro`);
+    assert.ok(!security.readOnlyToken().includes(TOKEN), '只读凭据不得包含主令牌');
+    assert.equal(security.isAuthorized(mockReq('/x', { 'x-mobile-typer-token': `${TOKEN}:ro` })), false, '拒绝旧的不安全格式');
     const ro = security.readOnlyToken();
 
     // 三种携带渠道下主 token 与只读 token 都能鉴权
@@ -110,7 +111,9 @@ test('P2-3: HTTP 集成 - 只读 token 可读不可写，会话同规则', async
   const stderrRef = { value: '' };
   child.stderr.on('data', chunk => { stderrRef.value += String(chunk); });
 
-  const ro = `${TOKEN}:ro`;
+  const tokenIssuer = new Security({ initialToken: TOKEN });
+  const ro = tokenIssuer.readOnlyToken();
+  tokenIssuer.destroy();
   const roHeaders = { 'x-mobile-typer-token': ro };
   const rwHeaders = { 'x-mobile-typer-token': TOKEN };
 
@@ -170,6 +173,49 @@ test('P2-3: HTTP 集成 - 只读 token 可读不可写，会话同规则', async
     assert.equal(res.status, 200, '只读会话可读');
     res = await fetch(`${baseUrl}/send`, { method: 'POST', headers: { ...sessionHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'hi' }) });
     assert.equal(res.status, 403, '只读会话写操作应被拒绝');
+
+    // Cookie-only polling must receive authenticated quotas (not the 60 rpm anonymous quota).
+    for (let i = 0; i < 15; i++) {
+      res = await fetch(`${baseUrl}/codex/prompts`, { headers: sessionHeaders });
+      assert.equal(res.status, 200, '正常会话轮询不应触发匿名限流');
+    }
+    res = await fetch(`${baseUrl}/codex/sessions`, { headers: sessionHeaders });
+    assert.equal(res.status, 403, '只读设备不得列举其他设备');
+
+    res = await fetch(`${baseUrl}/codex/pairing-code?scope=read-write`, { headers: sessionHeaders });
+    assert.equal((await res.json()).scope, 'read-only', '只读设备不能签发读写权限');
+    res = await fetch(`${baseUrl}/codex/pairing-code?scope=read-only`, { headers: rwHeaders });
+    const pair = await res.json();
+    assert.equal(pair.scope, 'read-only');
+    res = await fetch(`${baseUrl}/codex/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: pair.code }) });
+    assert.equal((await res.json()).scope, 'read-only');
+
+    res = await fetch(`${baseUrl}/codex/sessions`, { headers: rwHeaders });
+    const devices = await res.json();
+    assert.ok(devices.sessions.length > 0);
+    assert.ok(!JSON.stringify(devices).includes(sessionToken), '设备列表不泄露凭据');
+    assert.ok(devices.sessions.every(item => !item.tokenHash && item.id));
+    const device = devices.sessions.find(item => item.scope === 'read-only');
+    res = await fetch(`${baseUrl}/codex/sessions`, { method: 'POST', headers: { ...rwHeaders, 'content-type': 'application/json' }, body: JSON.stringify({ id: device.id }) });
+    assert.equal((await res.json()).revoked, true);
+    res = await fetch(`${baseUrl}/codex/sessions`, { headers: rwHeaders });
+    assert.ok(!(await res.json()).sessions.some(item => item.id === device.id));
+
+    res = await fetch(`${baseUrl}/`, { headers: rwHeaders });
+    const adminCookie = res.headers.get('set-cookie').match(/codexMiniSession=([^;]+)/)[1];
+    res = await fetch(`${baseUrl}/codex/pairing-code`, { headers: rwHeaders });
+    const pendingPair = await res.json();
+    res = await fetch(`${baseUrl}/codex/rotate-token`, { method: 'POST', headers: rwHeaders });
+    const rotated = await res.json();
+    assert.equal(rotated.ok, true);
+    for (const headers of [rwHeaders, roHeaders, sessionHeaders, { cookie: `codexMiniSession=${adminCookie}` }]) {
+      res = await fetch(`${baseUrl}/codex/prompts`, { headers });
+      assert.equal(res.status, 401, '轮换必须撤销所有旧凭据');
+    }
+    res = await fetch(`${baseUrl}/codex/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: pendingPair.code }) });
+    assert.equal(res.status, 401, '轮换作废尚未兑换的配对码');
+    res = await fetch(`${baseUrl}/codex/prompts`, { headers: { 'x-mobile-typer-token': rotated.token } });
+    assert.equal(res.status, 200);
   } finally {
     child.kill();
     await Promise.race([

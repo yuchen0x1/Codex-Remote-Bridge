@@ -59,7 +59,8 @@ It requires Xcode 15+ and shares the same Node.js service files.
 
 ## Running without building
 ```powershell
-# Start the HTTP service directly
+# Start the HTTPS service directly (self-signed local certificate)
 node server.js
-# Open http://localhost:8787/?token=<TOKEN> in browser or mobile
+# Open https://localhost:8787/?token=<TOKEN> on this computer; use its LAN IP on mobile.
+# Explicit plaintext development mode: npm run start:http
 ```
