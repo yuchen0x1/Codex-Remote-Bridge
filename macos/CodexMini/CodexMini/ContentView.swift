@@ -32,9 +32,9 @@ struct ContentView: View {
         }
         .padding(24)
         .background(
-            LinearGradient(colors: [.appBackground, .appSurface], startPoint: .topLeading, endPoint: .bottomTrailing)
+            LinearGradient(colors: [Color.appBackground, Color.appSurface], startPoint: .topLeading, endPoint: .bottomTrailing)
         )
-        .foregroundStyle(.appTextPrimary)
+        .foregroundStyle(Color.appTextPrimary)
         .alert("Codex Remote Bridge", isPresented: $service.showAlert) {
             Button("好") {}
         } message: {
@@ -46,13 +46,13 @@ struct ContentView: View {
         HStack(spacing: 14) {
             Image(systemName: "iphone.and.arrow.forward")
                 .font(.system(size: 34, weight: .bold))
-                .foregroundStyle(.appPrimary)
+                .foregroundStyle(Color.appPrimary)
             VStack(alignment: .leading, spacing: 4) {
                 Text(service.appName)
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                 Text("本地部署版 · 手机连接这台 Mac 上的 Codex")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.appTextSecondary)
+                    .foregroundStyle(Color.appTextSecondary)
             }
             Spacer()
             StatusBadge(title: service.state.displayName, color: service.statusColor)
@@ -62,13 +62,13 @@ struct ContentView: View {
     private var statusPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                MetricCard(title: "HTTP", value: service.healthOK ? "正常" : "不可用", footnote: service.healthText, tint: service.healthOK ? .appSuccess : .appTertiary)
-                MetricCard(title: "端口", value: String(service.port), footnote: service.currentEntryKindText, tint: .appPrimary)
-                MetricCard(title: "线程", value: service.threadCountText, footnote: service.latestThreadTitle, tint: .appThreadAccent)
+                MetricCard(title: "HTTP", value: service.healthOK ? "正常" : "不可用", footnote: service.healthText, tint: service.healthOK ? Color.appSuccess : Color.appTertiary)
+                MetricCard(title: "端口", value: String(service.port), footnote: service.currentEntryKindText, tint: Color.appPrimary)
+                MetricCard(title: "线程", value: service.threadCountText, footnote: service.latestThreadTitle, tint: Color.appThreadAccent)
             }
             Text(service.shortInstallDirectory)
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(.appTextTertiary)
+                .foregroundStyle(Color.appTextTertiary)
                 .lineLimit(1)
         }
         .padding(16)
@@ -83,29 +83,29 @@ struct ContentView: View {
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                     Text("只保留本机服务、局域网访问和本地日志")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.appTextTertiary)
+                        .foregroundStyle(Color.appTextTertiary)
                 }
                 Spacer()
                 Text(service.lastUpdatedText)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.appTextTertiary)
+                    .foregroundStyle(Color.appTextTertiary)
             }
 
             HStack(spacing: 10) {
-                LargeActionButton(title: "打开网页", systemImage: "safari", tint: .appSecondary) { service.openWeb() }
-                LargeActionButton(title: service.currentCopyButtonTitle, systemImage: "link", tint: .appPrimary) { service.copyLocalLink() }
-                LargeActionButton(title: "重启服务", systemImage: "arrow.clockwise", tint: .appTertiary) { Task { await service.restart() } }
-                LargeActionButton(title: "刷新状态", systemImage: "arrow.triangle.2.circlepath", tint: .appTextTertiary) { Task { await service.refresh() } }
+                LargeActionButton(title: "打开网页", systemImage: "safari", tint: Color.appSecondary) { service.openWeb() }
+                LargeActionButton(title: service.currentCopyButtonTitle, systemImage: "link", tint: Color.appPrimary) { service.copyLocalLink() }
+                LargeActionButton(title: "重启服务", systemImage: "arrow.clockwise", tint: Color.appTertiary) { Task { await service.restart() } }
+                LargeActionButton(title: "刷新状态", systemImage: "arrow.triangle.2.circlepath", tint: Color.appTextTertiary) { Task { await service.refresh() } }
             }
             HStack(spacing: 10) {
                 Text(service.updateText)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.appTextSecondary)
+                    .foregroundStyle(Color.appTextSecondary)
                     .lineLimit(2)
                 Spacer()
                 Button("检查更新") { Task { await service.checkForUpdate() } }
                     .buttonStyle(.borderedProminent)
-                    .tint(.appPrimary)
+                    .tint(Color.appPrimary)
                     .disabled(service.latestUpdateURL != nil)
                 if service.latestUpdateURL != nil {
                     Button("打开下载") { service.openLatestUpdate() }
@@ -121,16 +121,16 @@ struct ContentView: View {
         HStack(spacing: 12) {
             Label(service.logPreview.isEmpty ? "暂无最近日志" : "最近日志已收起，完整内容可从右侧打开", systemImage: "doc.text")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.appTextTertiary)
+                .foregroundStyle(Color.appTextTertiary)
                 .lineLimit(1)
             Spacer(minLength: 16)
             VStack(alignment: .trailing, spacing: 2) {
                 Text(service.currentEntryKindText)
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.appTextTertiary.opacity(0.75))
+                    .foregroundStyle(Color.appTextTertiary.opacity(0.75))
                 Text(service.currentEntryURLString)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.appTextTertiary)
+                    .foregroundStyle(Color.appTextTertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
@@ -146,8 +146,8 @@ struct ContentView: View {
 private extension View {
     func panelBackground(cornerRadius: CGFloat) -> some View {
         self
-            .background(.appSurfaceAlt, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).stroke(.appDivider))
+            .background(Color.appSurfaceAlt, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).stroke(Color.appDivider))
     }
 }
 
@@ -173,13 +173,13 @@ private struct MetricCard: View {
     let tint: Color
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.system(size: 11, weight: .bold)).foregroundStyle(.appTextTertiary)
+            Text(title).font(.system(size: 11, weight: .bold)).foregroundStyle(Color.appTextTertiary)
             Text(value).font(.system(size: 24, weight: .bold, design: .rounded)).foregroundStyle(tint)
-            Text(footnote).font(.system(size: 11, weight: .medium)).foregroundStyle(.appTextTertiary).lineLimit(1)
+            Text(footnote).font(.system(size: 11, weight: .medium)).foregroundStyle(Color.appTextTertiary).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(.appSurfaceDeep, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color.appSurfaceDeep, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(tint.opacity(0.18)))
     }
 }
@@ -215,6 +215,6 @@ private struct TextLinkButton: View {
                 .font(.system(size: 12, weight: .bold))
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.appTextSecondary)
+        .foregroundStyle(Color.appTextSecondary)
     }
 }
