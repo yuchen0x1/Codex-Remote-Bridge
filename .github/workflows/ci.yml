@@ -105,13 +105,13 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Build (Release)
         run: |
-          # Xcode automatically creates a scheme for the application target.
-          xcodebuild \
-            -project macos/CodexMini/CodexMini.xcodeproj \
-            -scheme "Codex Remote Bridge" \
-            -configuration Release \
-            -derivedDataPath /tmp/codexmini-derived \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+          # This prepares the ignored service/runtime resources before Xcode runs.
+          APP_PATH="$RUNNER_TEMP/Codex Remote Bridge.app" \
+            bash scripts/build-codex-mini-app.sh
